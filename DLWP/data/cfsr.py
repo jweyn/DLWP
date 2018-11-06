@@ -464,23 +464,27 @@ class CFSReanalysis(object):
 
             nc_fid.close()
 
-    def open(self, concat_dim='time', **dataset_kwargs):
+    def open(self, exact_dates=False, concat_dim='time', **dataset_kwargs):
         """
-        Open an xarray multi-file Dataset for the processed files with initialization dates in self.dataset_init_dates.
-        Once opened, this Dataset is accessible by self.Dataset.
+        Open an xarray multi-file Dataset for the processed files with dates set using set_dates(), retrieve(), or
+        write(). Once opened, this Dataset is accessible by self.Dataset.
 
+        :param exact_dates: bool: if True, set the Dataset to have the exact dates of this instance; otherwise,
+            keep all of the monthly dates in the opened files
         :param concat_dim: passed to xarray.open_mfdataset()
         :param dataset_kwargs: kwargs passed to xarray.open_mfdataset()
         :return:
         """
         nc_file_dir = '%s/processed' % self._root_directory
         if not self.dataset_dates:
-            raise ValueError("no ensemble initialization dates specified for loading using 'set_init_dates'")
+            raise ValueError("use set_dates() to specify times of data to load")
         dates_index = pd.DatetimeIndex(self.dataset_dates).sort_values()
         months = dates_index.to_period('M')
         unique_months = months.unique()
         nc_files = ['%s/%s%s.nc' % (nc_file_dir, self._file_id, d.strftime('%Y%m')) for d in unique_months]
         self.Dataset = xr.open_mfdataset(nc_files, concat_dim=concat_dim, **dataset_kwargs)
+        if exact_dates:
+            self.Dataset = self.Dataset.sel(time=self.dataset_dates)
         self.dataset_variables = list(self.Dataset.variables.keys())
 
     def field(self, variable, time, level):
