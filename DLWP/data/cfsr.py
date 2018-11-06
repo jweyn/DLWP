@@ -464,7 +464,7 @@ class CFSReanalysis(object):
 
             nc_fid.close()
 
-    def open(self, exact_dates=False, concat_dim='time', **dataset_kwargs):
+    def open(self, exact_dates=True, concat_dim='time', **dataset_kwargs):
         """
         Open an xarray multi-file Dataset for the processed files with dates set using set_dates(), retrieve(), or
         write(). Once opened, this Dataset is accessible by self.Dataset.

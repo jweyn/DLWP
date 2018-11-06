@@ -5,5 +5,5 @@
 #
 
 """
-DLWP, or Deep Learning Waether Prediction, is a module for predicting weather using deep learning.
+DLWP, or Deep Learning Weather Prediction, is a module for predicting weather using deep learning.
 """
