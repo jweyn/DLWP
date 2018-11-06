@@ -8,5 +8,5 @@
 Implementation of deep learning model frameworks for DLWP.
 """
 
-from .models import DLWPNeuralNet
+from .models import DLWPNeuralNet, DataGenerator
 from .preprocessing import Preprocessor

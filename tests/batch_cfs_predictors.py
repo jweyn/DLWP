@@ -21,6 +21,7 @@ levels = [300, 500, 700]
 data_root = '/home/disk/wave2/jweyn/Data'
 
 cfs = CFSReanalysis(root_directory='%s/CFSR' % data_root, file_id='dlwp_')
+cfs.set_dates(dates)
 cfs.open(autoclose=True)
 
 pp = Preprocessor(cfs, predictor_file='%s/DLWP/cfs_2000-2009_hgt_300-700.nc' % data_root)

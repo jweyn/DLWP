@@ -16,13 +16,22 @@ import keras.models
 from keras.utils import multi_gpu_model, Sequence
 
 from .. import util
+from .preprocessing import delete_nan_samples
 
 
 class DLWPNeuralNet(object):
     """
-    Class containing an ensemble selection model and other processing tools for the input data.
+    DLWP model class which uses a Keras Sequential neural network built to user specification.
     """
-    def __init__(self, scaler_type='MinMaxScaler', impute_missing=False, scale_targets=True):
+    def __init__(self, scaler_type='StandardScaler', scale_targets=True, impute_missing=False):
+        """
+        Initialize an instance of DLWPNeuralNet.
+
+        :param scaler_type: str: class of scikit-learn scaler to apply to the input data
+        :param scale_targets: bool: if True, also scale the target data. Necessary for optimizer evaluation if there
+            are large magnitude differences in the output features.
+        :param impute_missing: bool: if True, uses scikit-learn Imputer for missing values
+        """
         self.scaler_type = scaler_type
         self.scale_targets = scale_targets
         self.scaler = None
@@ -43,7 +52,6 @@ class DLWPNeuralNet(object):
         :param layers: tuple: tuple of (layer_name, kwargs_dict) pairs added to the model
         :param gpus: int: number of GPU units on which to parallelize the Keras model
         :param compile_kwargs: kwargs passed to the 'compile' method of the Keras model
-        :return:
         """
         # Test the parameters
         if type(gpus) is not int:
@@ -133,7 +141,6 @@ class DLWPNeuralNet(object):
 
         :param predictors: ndarray: predictor data
         :param targets: ndarray: corresponding truth data
-        :return:
         """
         if self.impute:
             self.imputer_fit(predictors, targets)
@@ -143,14 +150,13 @@ class DLWPNeuralNet(object):
 
     def fit(self, predictors, targets, initialize=True, **kwargs):
         """
-        Fit the EnsembleSelector model. Also performs input feature scaling.
+        Fit the DLWPNeuralNet model. Also performs input feature scaling.
 
         :param predictors: ndarray: predictor data
         :param targets: ndarray: corresponding truth data
         :param initialize: bool: if True, initializes the Imputer and Scaler to the given predictors. 'fit' must be
             called with initialize=True the first time, or the Imputer and Scaler must be fit with 'init_fit'.
         :param kwargs: passed to the Keras 'fit' method
-        :return:
         """
         if initialize:
             self.init_fit(predictors, targets)
@@ -172,11 +178,11 @@ class DLWPNeuralNet(object):
 
     def fit_generator(self, generator, **kwargs):
         """
-        Fit the EnsembleSelector model using a generator.
+        Fit the DLWPNeuralNet model using a generator. The generator becomes responsible for scaling and imputing
+        the predictor/target data.
 
-        :param generator: a generator for producing batches of data (see Keras docs)
+        :param generator: a generator for producing batches of data (see Keras docs), e.g., DataGenerator below
         :param kwargs: passed to the model's fit_generator() method
-        :return:
         """
         # If generator is a DataGenerator below, check that we have called init_fit
         if isinstance(generator, DataGenerator):
@@ -186,11 +192,11 @@ class DLWPNeuralNet(object):
 
     def predict(self, predictors, **kwargs):
         """
-        Make a prediction with the EnsembleSelector model. Also performs input feature scaling.
+        Make a prediction with the DLWPNeuralNet model. Also performs input feature scaling.
 
         :param predictors: ndarray: predictor data
         :param kwargs: passed to Keras 'predict' method
-        :return:
+        :return: ndarray: model prediction
         """
         if self.impute:
             predictors = self.imputer_transform(predictors)
@@ -200,6 +206,26 @@ class DLWPNeuralNet(object):
             return self.scaler_y.inverse_transform(predicted)
         else:
             return predicted
+
+    def predict_timeseries(self, predictors, time_steps, **kwargs):
+        """
+        Make a timeseries prediction with the DLWPNeuralNet model. Also performs input feature scaling. Forward predict
+        time_steps number of times.
+
+        :param predictors: ndarray: predictor data
+        :param time_steps: int: number of time steps to predict forward
+        :param kwargs: passed to Keras 'predict' method
+        :return: ndarray: model prediction; first dim is time
+        """
+        time_steps = int(time_steps)
+        if time_steps < 0:
+            raise ValueError("time_steps must be an int > 0")
+        time_series = np.full((time_steps,) + predictors.shape, np.nan, dtype=np.float32)
+        p = predictors.copy()
+        for t in range(time_steps):
+            p = 1. * self.predict(p, **kwargs)
+            time_series[t, ...] = 1. * p
+        return time_series
 
     def evaluate(self, predictors, targets, **kwargs):
         """
@@ -223,84 +249,61 @@ class DataGenerator(Sequence):
     of the EnsembleSelector to do scaling and imputing of data.
     """
 
-    def __init__(self, selector, ds, batch_size=32, convolved=False, shuffle=False, missing_threshold=None,
-                 model_fields_only=False):
+    def __init__(self, model, ds, batch_size=32, shuffle=False, remove_nan=True):
         """
         Initialize a DataGenerator.
 
-        :param selector: ensemble_net.ensemble_selection.EnsembleSelector model instance
-        :param ds: xarray Dataset: predictor dataset
+        :param model: instance of a DLWP model
+        :param ds: xarray Dataset: predictor dataset. Should have attributes 'predictors' and 'targets'
         :param batch_size: int: number of samples (days) to take at a time from the dataset
-        :param convolved: bool: True if convolution was applied to create predictors
         :param shuffle: bool: if True, randomly select batches
-        :param missing_threshold: float 0-1: if not None, then removes any samples with a fraction of NaN
-            larger than this
-        :param model_fields_only: bool: if True, use only model fields as input (no observations)
+        :param remove_nan: bool: if True, remove any samples with NaNs
         """
-        self.selector = selector
+        self.model = model
+        if not hasattr(ds, 'predictors') or not hasattr(ds, 'targets'):
+            raise ValueError("dataset must have 'predictors' and 'targets' attributes")
         self.ds = ds
-        self.batch_size = batch_size
-        self.convolved = convolved
-        self.shuffle = shuffle
-        if missing_threshold is not None and not (0 <= missing_threshold <= 1):
-            raise ValueError("'threshold' must be between 0 and 1")
-        self.missing_threshold = missing_threshold
-        self.model_fields_only = model_fields_only
-        self.impute_missing = self.selector.impute
-        self.indices = []
-
-        self.num_dates = self.ds.dims['init_date']
-        if self.convolved:
-            self.num_samples = self.ds.dims['init_date'] * self.ds.dims['member'] * self.ds.dims['convolution']
-        else:
-            self.num_samples = self.ds.dims['init_date'] * self.ds.dims['member']
+        self._batch_size = batch_size
+        self._shuffle = shuffle
+        self._remove_nan = remove_nan
+        self._impute_missing = self.model.impute
+        self._indices = []
+        self._n_sample = ds.dims['sample']
 
         self.on_epoch_end()
 
-    def get_spatial_shape(self):
+    def spatial_shape(self):
         """
         :return: the shape of the spatial component of ensemble predictors
         """
-        forecast_predictors, fpi = convert_ensemble_predictors_to_samples(
-            self.ds['ENS_PRED'].isel(init_date=[0]).values, convolved=self.convolved)
-        return forecast_predictors.shape[1:]
+        return self.ds.predictors.shape[1:]
 
     def on_epoch_end(self):
-        self.indices = np.arange(self.num_dates)
-        if self.shuffle:
-            np.random.shuffle(self.indices)
+        self._indices = np.arange(self._n_sample)
+        if self._shuffle:
+            np.random.shuffle(self._indices)
 
-    def generate_data(self, days, scale_and_impute=True):
-        if len(days) > 0:
-            ds = self.ds.isel(init_date=days)
+    def _generate_data(self, samples, scale_and_impute=True):
+        if len(samples) > 0:
+            ds = self.ds.isel(sample=samples)
         else:
-            ds = self.ds.isel(init_date=slice(None))
+            ds = self.ds.isel(sample=slice(None))
         ds.load()
-        forecast_predictors, fpi = convert_ensemble_predictors_to_samples(ds['ENS_PRED'].values,
-                                                                          convolved=self.convolved)
-        ae_targets, eti = convert_ae_meso_predictors_to_samples(np.expand_dims(ds['AE_TAR'].values, 3),
-                                                                convolved=self.convolved)
-        if self.model_fields_only:
-            combined_predictors = combine_predictors(forecast_predictors)
-        else:
-            ae_predictors, epi = convert_ae_meso_predictors_to_samples(ds['AE_PRED'].values, convolved=self.convolved)
-            combined_predictors = combine_predictors(forecast_predictors, ae_predictors)
+        p = ds.predictors.values.reshape((ds.predictors.shape[0], -1))
+        t = ds.targets.values.reshape((ds.targets.shape[0], -1))
         ds.close()
         ds = None
 
         # Remove samples with NaN
-        if self.impute_missing:
-            if self.missing_threshold is not None:
-                p, t = delete_nan_samples(combined_predictors, ae_targets, threshold=self.missing_threshold)
-            else:
-                p, t = combined_predictors, ae_targets
+        if self._remove_nan:
+            p, t = delete_nan_samples(p, t)
+        if self._impute_missing:
             if scale_and_impute:
-                p, t = self.selector.imputer_transform(p, t)
-                p, t = self.selector.scaler_transform(p, t)
+                p, t = self.model.imputer_transform(p, t)
+                p, t = self.model.scaler_transform(p, t)
         else:
-            p, t = delete_nan_samples(combined_predictors, ae_targets)
             if scale_and_impute:
-                p, t = self.selector.scaler_transform(p, t)
+                p, t = self.model.scaler_transform(p, t)
 
         return p, t
 
@@ -308,7 +311,7 @@ class DataGenerator(Sequence):
         """
         :return: the number of batches per epoch
         """
-        return int(np.floor(self.num_dates / self.batch_size))
+        return int(np.floor(self._n_sample / self._batch_size))
 
     def __getitem__(self, index):
         """
@@ -317,9 +320,9 @@ class DataGenerator(Sequence):
         :return:
         """
         # Generate indexes of the batch
-        indexes = self.indices[index * self.batch_size:(index + 1) * self.batch_size]
+        indexes = self._indices[index * self._batch_size:(index + 1) * self._batch_size]
 
         # Generate data
-        X, y = self.generate_data(indexes)
+        X, y = self._generate_data(indexes)
 
         return X, y
