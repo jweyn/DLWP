@@ -283,7 +283,7 @@ class DataGenerator(Sequence):
         if self._shuffle:
             np.random.shuffle(self._indices)
 
-    def _generate_data(self, samples, scale_and_impute=True):
+    def generate(self, samples, scale_and_impute=True):
         if len(samples) > 0:
             ds = self.ds.isel(sample=samples)
         else:
@@ -323,6 +323,6 @@ class DataGenerator(Sequence):
         indexes = self._indices[index * self._batch_size:(index + 1) * self._batch_size]
 
         # Generate data
-        X, y = self._generate_data(indexes)
+        X, y = self.generate(indexes)
 
         return X, y

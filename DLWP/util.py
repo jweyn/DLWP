@@ -175,3 +175,4 @@ class BatchHistory(Callback):
         for k, v in logs.items():
             self.history[self.epoch].setdefault(k, []).append(v)
 
+
