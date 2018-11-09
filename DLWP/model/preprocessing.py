@@ -40,7 +40,20 @@ class Preprocessor(object):
         self.predictor_shape = ()
         self.n_features = None
 
-    def data_to_samples(self, variables='all', levels='all', in_memory=False, verbose=False):
+    def data_to_samples(self, batch_samples=100, variables='all', levels='all', scale_variables=False,
+                        in_memory=False, overwrite=False, verbose=False):
+        """
+        Convert the data referenced by the data_obj in __init__ to samples ready for ingestion in a DLWP model. Write
+        samples in batches of size batch_samples. The parameter scale_variables determines whether individual
+        variable/level combinations are scaled and de-meaned by their spatially-averaged values.
+
+        :param variables: iter: list of variables to process; may be 'all' for all variables available
+        :param levels: iter: list of integer pressure levels (mb); may be 'all'
+        :param scale_variables: bool: if True, apply de-mean and scaling on a variable/level basis
+        :param in_memory: bool: if True, speeds up operations by performing them in memory (may require lots of RAM)
+        :param verbose: bool: print progress statements
+        :return: opens Dataset on self.data
+        """
         # Test that data is loaded
         if self.raw_data is None:
             raise ValueError('cannot process when no data_obj was supplied at initialization')
@@ -73,12 +86,13 @@ class Preprocessor(object):
 
         # Sort into predictors and targets. If in_memory is false, write to netCDF.
         if not in_memory:
-            if os.path.isfile(self._predictor_file):
+            if os.path.isfile(self._predictor_file) and not overwrite:
                 raise IOError("predictor file '%s' already exists" % self._predictor_file)
             if verbose:
                 print('Preprocessor.data_to_samples: creating output file %s' %self._predictor_file)
             nc_fid = nc.Dataset(self._predictor_file, 'w')
             nc_fid.description = 'Training data for DLWP'
+            nc_fid.setncattr('scaling', 'True' if scale_variables else 'False')
             nc_fid.createDimension('sample', 0)
             nc_fid.createDimension('variable', n_var)
             nc_fid.createDimension('level', n_level)
@@ -129,13 +143,28 @@ class Preprocessor(object):
             predictors = np.full((n_sample, n_var, n_level, n_lat, n_lon), np.nan, dtype=np.float32)
             targets = predictors.copy()
 
-        # Fill in the data. Each point gets filled with the target index 1 higher
-        for s in range(n_sample):
-            if verbose:
-                print('Preprocessor.data_to_samples: writing sample %s of %s' % (s+1, n_sample))
-            for v, var in enumerate(variables):
-                predictors[s, v, ...] = ds[var].isel(time=s).values
-                targets[s, v, ...] = ds[var].isel(time=s+1).values
+        # Fill in the data. Each point gets filled with the target index 1 higher. Iterate by variable and level for
+        # scaling.
+        for v, var in enumerate(variables):
+            for l, lev in enumerate(levels):
+                if verbose:
+                    print('Preprocessor.data_to_samples: variable %s of %s; level %s of %s' %
+                          (v+1, len(variables), l+1, len(levels)))
+                if scale_variables:
+                    if verbose:
+                        print('Preprocessor.data_to_samples: calculating mean and std')
+                    v_mean = mean_by_batch(ds[var].isel(level=l), batch_samples)
+                    v_std = std_by_batch(ds[var].isel(level=l), batch_samples, mean=v_mean)
+                else:
+                    v_mean = 0.0
+                    v_std = 1.0
+                for s in range(0, n_sample, batch_samples):
+                    idx = slice(s, min(s+batch_samples, n_sample))
+                    idxp1 = slice(s+1, min(s+1+batch_samples, n_sample+1))
+                    if verbose:
+                        print('Preprocessor.data_to_samples: writing batch %s of %s' % (s+1, n_sample/batch_samples+1))
+                    predictors[idx, v, l, ...] = (ds[var].isel(time=idx, level=l).values - v_mean) / v_std
+                    targets[idx, v, l, ...] = (ds[var].isel(time=idxp1, level=l).values - v_mean) / v_std
 
         if not in_memory:
             nc_fid.close()
@@ -165,7 +194,8 @@ class Preprocessor(object):
                     'units': 'degrees_east'
                 }),
             }, attrs={
-                'description': 'Training data for DLWP'
+                'description': 'Training data for DLWP',
+                'scaling': 'True' if scale_variables else 'False'
             })
 
         self.data = result_ds
@@ -263,3 +293,45 @@ def train_test_split_ind(n_sample, test_size, method='random'):
         raise ValueError("'method' must be 'first', 'last', or 'random'")
 
     return train_set, test_set
+
+
+def mean_by_batch(da, batch_size, axis=0):
+    """
+    Loop over batches indexed in axis in an xarray DataArray to take the grand mean of the array in a memory-
+    efficient way.
+
+    :param da: xarray DataArray
+    :param batch_size: int: number of samples to load and mean at a time
+    :param axis: int: axis along which to index batches
+    :return: float: the mean of the array
+    """
+    size = da.shape[axis]
+    batches = list(range(0, size, batch_size))
+    dim = da.dims[axis]
+    total = 0.0
+    for b in batches:
+        total += da.isel(**{dim: slice(b, min(b+batch_size, size))}).values.sum()
+    return total / da.size
+
+
+def std_by_batch(da, batch_size, axis=0, mean=None):
+    """
+    Loop over batches indexed in axis in an xarray DataArray to take the standard deviation of the array in a memory-
+    efficient way. If mean is provided, assumes the mean of the data is already known to be this value.
+
+    :param da: xarray DataArray
+    :param batch_size: int: number of samples to load and mean at a time
+    :param axis: int: axis along which to index batches
+    :param mean: float: the (known) mean of the array
+    :return: float: the standard deviation of the array
+    """
+    if mean is None:
+        mean = mean_by_batch(da, batch_size, axis)
+    size = da.shape[axis]
+    batches = list(range(0, size, batch_size))
+    dim = da.dims[axis]
+    total = 0.0
+    for b in batches:
+        total += np.sum((da.isel(**{dim: slice(b, min(b + batch_size, size))}).values - mean) ** 2.)
+    return np.sqrt(total / da.size)
+

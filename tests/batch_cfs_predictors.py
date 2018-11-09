@@ -24,7 +24,8 @@ cfs = CFSReanalysis(root_directory='%s/CFSR' % data_root, file_id='dlwp_')
 cfs.set_dates(dates)
 cfs.open(autoclose=True)
 
-pp = Preprocessor(cfs, predictor_file='%s/DLWP/cfs_2000-2009_hgt_300-700.nc' % data_root)
-pp.data_to_samples(variables=variables, levels=levels, verbose=True)
+pp = Preprocessor(cfs, predictor_file='%s/DLWP/cfs_2005-2009_hgt_300-700_scale.nc' % data_root)
+pp.data_to_samples(batch_samples=500, variables=variables, levels=levels, scale_variables=True,
+                   overwrite=True, verbose=True)
 print(pp.data)
 pp.close()

@@ -23,22 +23,29 @@ class DLWPNeuralNet(object):
     """
     DLWP model class which uses a Keras Sequential neural network built to user specification.
     """
-    def __init__(self, scaler_type='StandardScaler', scale_targets=True, impute_missing=False):
+    def __init__(self, scaler_type='StandardScaler', scale_targets=True, apply_same_y_scaling=True,
+                 impute_missing=False):
         """
         Initialize an instance of DLWPNeuralNet.
 
-        :param scaler_type: str: class of scikit-learn scaler to apply to the input data
+        :param scaler_type: str: class of scikit-learn scaler to apply to the input data. If None is provided,
+            disables scaling.
         :param scale_targets: bool: if True, also scale the target data. Necessary for optimizer evaluation if there
             are large magnitude differences in the output features.
+        :param apply_same_y_scaling: bool: if True, if the predictors and targets are the same shape (as for time
+            series prediction), apply the same scaler to predictors and targets
         :param impute_missing: bool: if True, uses scikit-learn Imputer for missing values
+        :param add_time_axis: bool: if True, adds a time dimension for RNNs to predictor and target data
         """
         self.scaler_type = scaler_type
         self.scale_targets = scale_targets
+        self.apply_same_y_scaling = apply_same_y_scaling
         self.scaler = None
         self.scaler_y = None
         self.impute = impute_missing
         self.imputer = None
         self.imputer_y = None
+
         self.model = None
         self.is_parallel = False
         self.is_init_fit = False
@@ -97,14 +104,23 @@ class DLWPNeuralNet(object):
         return a
 
     def scaler_fit(self, X, y, **kwargs):
-        scaler_class = util.get_from_class('sklearn.preprocessing', self.scaler_type)
-        self.scaler = scaler_class(**kwargs)
-        self.scaler_y = scaler_class(**kwargs)
-        self.scaler.fit(self._reshape(X))
-        if self.scale_targets:
-            self.scaler_y.fit(self._reshape(y))
+        if self.scaler_type is not None:
+            scaler_class = util.get_from_class('sklearn.preprocessing', self.scaler_type)
+            self.scaler = scaler_class(**kwargs)
+            self.scaler_y = scaler_class(**kwargs)
+            self.scaler.fit(self._reshape(X))
+            if self.scale_targets:
+                if self.apply_same_y_scaling:
+                    self.scaler_y = self.scaler
+                else:
+                    self.scaler_y.fit(self._reshape(y))
 
     def scaler_transform(self, X, y=None):
+        if self.scaler_type is None:
+            if y is not None:
+                return X, y
+            else:
+                return X
         X, X_shape = self._reshape(X, ret=True)
         X_transform = self.scaler.transform(X)
         if y is not None:
@@ -122,7 +138,10 @@ class DLWPNeuralNet(object):
         self.imputer = imputer_class(missing_values=np.nan, strategy="mean", axis=0, copy=False)
         self.imputer_y = imputer_class(missing_values=np.nan, strategy="mean", axis=0, copy=False)
         self.imputer.fit(self._reshape(X))
-        self.imputer_y.fit(self._reshape(y))
+        if self.apply_same_y_scaling:
+            self.imputer_y = self.imputer
+        else:
+            self.imputer_y.fit(self._reshape(y))
 
     def imputer_transform(self, X, y=None):
         X, X_shape = self._reshape(X, ret=True)
@@ -249,7 +268,7 @@ class DataGenerator(Sequence):
     of the EnsembleSelector to do scaling and imputing of data.
     """
 
-    def __init__(self, model, ds, batch_size=32, shuffle=False, remove_nan=True):
+    def __init__(self, model, ds, batch_size=32, shuffle=False, remove_nan=True, add_time_axis=False):
         """
         Initialize a DataGenerator.
 
@@ -258,6 +277,7 @@ class DataGenerator(Sequence):
         :param batch_size: int: number of samples (days) to take at a time from the dataset
         :param shuffle: bool: if True, randomly select batches
         :param remove_nan: bool: if True, remove any samples with NaNs
+        :param add_time_axis: bool: if True, add a time axis for use with Keras RNNs
         """
         self.model = model
         if not hasattr(ds, 'predictors') or not hasattr(ds, 'targets'):
@@ -266,6 +286,7 @@ class DataGenerator(Sequence):
         self._batch_size = batch_size
         self._shuffle = shuffle
         self._remove_nan = remove_nan
+        self._add_time_axis = add_time_axis
         self._impute_missing = self.model.impute
         self._indices = []
         self._n_sample = ds.dims['sample']
@@ -304,6 +325,11 @@ class DataGenerator(Sequence):
         else:
             if scale_and_impute:
                 p, t = self.model.scaler_transform(p, t)
+
+        # Add a time dimension axis for RNNs
+        if self._add_time_axis:
+            p = np.expand_dims(p, axis=1)
+            t = np.expand_dims(t, axis=1)
 
         return p, t
 
