@@ -239,15 +239,15 @@ def delete_nan_samples(predictors, targets, large_fill_value=False, threshold=No
 
     :param predictors: ndarray, shape [num_samples,...]: predictor data
     :param targets: ndarray, shape [num_samples,...]: target data
-    :param large_fill_value: bool: if True, treats very large values (> 1e30) as NaNs
+    :param large_fill_value: bool: if True, treats very large values (>= 1e20) as NaNs
     :param threshold: float 0-1: if not None, then removes any samples with a fraction of NaN larger than this
     :return: predictors, targets: ndarrays with samples removed
     """
     if threshold is not None and not (0 <= threshold <= 1):
         raise ValueError("'threshold' must be between 0 and 1")
     if large_fill_value:
-        predictors[(predictors > 1.e30) | (predictors < -1.e30)] = np.nan
-        targets[(targets > 1.e30) | (targets < -1.e30)] = np.nan
+        predictors[(predictors >= 1.e20) | (predictors <= -1.e20)] = np.nan
+        targets[(targets >= 1.e20) | (targets <= -1.e20)] = np.nan
     p_shape = predictors.shape
     t_shape = targets.shape
     predictors = predictors.reshape((p_shape[0], -1))

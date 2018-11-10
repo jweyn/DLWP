@@ -48,7 +48,7 @@ class DLWPNeuralNet(object):
 
         self.model = None
         self.is_parallel = False
-        self.is_init_fit = False
+        self._is_init_fit = False
 
     def build_model(self, layers=(), gpus=1, **compile_kwargs):
         """
@@ -165,7 +165,7 @@ class DLWPNeuralNet(object):
             self.imputer_fit(predictors, targets)
             predictors, targets = self.imputer_transform(predictors, y=targets)
         self.scaler_fit(predictors, targets)
-        self.is_init_fit = True
+        self._is_init_fit = True
 
     def fit(self, predictors, targets, initialize=True, **kwargs):
         """
@@ -179,7 +179,7 @@ class DLWPNeuralNet(object):
         """
         if initialize:
             self.init_fit(predictors, targets)
-        elif not self.is_init_fit:
+        elif not self._is_init_fit:
             raise AttributeError('DLWPNeuralNet has not been initialized for fitting with init_fit()')
         if self.impute:
             predictors, targets = self.imputer_transform(predictors, y=targets)
@@ -205,7 +205,7 @@ class DLWPNeuralNet(object):
         """
         # If generator is a DataGenerator below, check that we have called init_fit
         if isinstance(generator, DataGenerator):
-            if not self.is_init_fit:
+            if not self._is_init_fit:
                 raise AttributeError('DLWPNeuralNet has not been initialized for fitting with init_fit()')
         self.model.fit_generator(generator, **kwargs)
 
