@@ -18,8 +18,8 @@ import numpy as np
 import keras.models
 from keras.legacy import interfaces
 from keras.utils import conv_utils
-from keras.engine.base_layer import InputSpec
-from keras.engine.base_layer import Layer
+from keras.engine import InputSpec
+from keras.engine import Layer
 from keras.callbacks import Callback
 from keras import backend as K
 from keras import activations, initializers, regularizers, constraints
@@ -176,3 +176,6 @@ class BatchHistory(Callback):
             self.history[self.epoch].setdefault(k, []).append(v)
 
 
+class RNNResetStates(Callback):
+    def on_epoch_begin(self, epoch, logs=None):
+        self.model.reset_states()

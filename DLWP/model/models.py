@@ -221,7 +221,7 @@ class DLWPNeuralNet(object):
             predictors = self.imputer_transform(predictors)
         predictors_scaled = self.scaler_transform(predictors)
         predicted = self.model.predict(predictors_scaled, **kwargs)
-        if self.scale_targets:
+        if self.scale_targets and self.scaler_type is not None:
             return self.scaler_y.inverse_transform(predicted)
         else:
             return predicted
@@ -293,6 +293,7 @@ class DataGenerator(Sequence):
 
         self.on_epoch_end()
 
+    @property
     def spatial_shape(self):
         """
         :return: the shape of the spatial component of ensemble predictors
