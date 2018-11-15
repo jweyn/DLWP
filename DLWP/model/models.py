@@ -48,7 +48,10 @@ class DLWPNeuralNet(object):
 
         self.model = None
         self.is_parallel = False
-        self._is_init_fit = False
+        if scaler_type is None:
+            self._is_init_fit = True
+        else:
+            self._is_init_fit = False
 
     def build_model(self, layers=(), gpus=1, **compile_kwargs):
         """
@@ -268,7 +271,8 @@ class DataGenerator(Sequence):
     of the EnsembleSelector to do scaling and imputing of data.
     """
 
-    def __init__(self, model, ds, batch_size=32, shuffle=False, remove_nan=True, add_time_axis=False):
+    def __init__(self, model, ds, batch_size=32, shuffle=False, remove_nan=True, convolution=False,
+                 add_time_axis=False):
         """
         Initialize a DataGenerator.
 
@@ -277,6 +281,7 @@ class DataGenerator(Sequence):
         :param batch_size: int: number of samples (days) to take at a time from the dataset
         :param shuffle: bool: if True, randomly select batches
         :param remove_nan: bool: if True, remove any samples with NaNs
+        :param convolution: bool: if True, prepares samples for convolutional
         :param add_time_axis: bool: if True, add a time axis for use with Keras RNNs
         """
         self.model = model
@@ -286,6 +291,7 @@ class DataGenerator(Sequence):
         self._batch_size = batch_size
         self._shuffle = shuffle
         self._remove_nan = remove_nan
+        self._convolution = convolution
         self._add_time_axis = add_time_axis
         self._impute_missing = self.model.impute
         self._indices = []
@@ -300,6 +306,20 @@ class DataGenerator(Sequence):
         """
         return self.ds.predictors.shape[1:]
 
+    @property
+    def n_features(self):
+        """
+        :return: int: the number of features in the predictor array
+        """
+        return int(np.prod(self.spatial_shape))
+
+    @property
+    def convolution_shape(self):
+        """
+        :return: the shape of the predictors expected by a convolutional layer. Note it is channels_first!
+        """
+        return (int(np.prod(self.ds.predictors.shape[1:-2])),) + self.ds.predictors.shape[-2:]
+
     def on_epoch_end(self):
         self._indices = np.arange(self._n_sample)
         if self._shuffle:
@@ -311,8 +331,9 @@ class DataGenerator(Sequence):
         else:
             ds = self.ds.isel(sample=slice(None))
         ds.load()
-        p = ds.predictors.values.reshape((ds.predictors.shape[0], -1))
-        t = ds.targets.values.reshape((ds.targets.shape[0], -1))
+        n_sample = ds.predictors.shape[0]
+        p = ds.predictors.values.reshape((n_sample, -1))
+        t = ds.targets.values.reshape((n_sample, -1))
         ds.close()
         ds = None
 
@@ -326,6 +347,11 @@ class DataGenerator(Sequence):
         else:
             if scale_and_impute:
                 p, t = self.model.scaler_transform(p, t)
+
+        # Format spatial shape for convolutions
+        if self._convolution:
+            p = p.reshape((n_sample,) + self.convolution_shape)
+            t = t.reshape((n_sample,) + self.convolution_shape)
 
         # Add a time dimension axis for RNNs
         if self._add_time_axis:

@@ -37,8 +37,27 @@ class Preprocessor(object):
                 self.raw_data.open()
         self._predictor_file = predictor_file
         self.data = None
-        self.predictor_shape = ()
-        self.n_features = None
+
+    @property
+    def spatial_shape(self):
+        """
+        :return: the shape of the spatial component of ensemble predictors
+        """
+        return self.data.predictors.shape[1:]
+
+    @property
+    def n_features(self):
+        """
+        :return: int: the number of features in the predictor array
+        """
+        return int(np.prod(self.spatial_shape))
+
+    @property
+    def convolution_shape(self):
+        """
+        :return: the shape of the predictors expected by a convolutional layer. Note it is channels_first!
+        """
+        return (int(np.prod(self.data.predictors.shape[1:-2])),) + self.data.predictors.shape[-2:]
 
     def data_to_samples(self, batch_samples=100, variables='all', levels='all', scale_variables=False,
                         in_memory=False, overwrite=False, verbose=False):
@@ -47,10 +66,12 @@ class Preprocessor(object):
         samples in batches of size batch_samples. The parameter scale_variables determines whether individual
         variable/level combinations are scaled and de-meaned by their spatially-averaged values.
 
+        :param batch_samples: int: number of samples in the time dimension to read and process at once
         :param variables: iter: list of variables to process; may be 'all' for all variables available
         :param levels: iter: list of integer pressure levels (mb); may be 'all'
         :param scale_variables: bool: if True, apply de-mean and scaling on a variable/level basis
         :param in_memory: bool: if True, speeds up operations by performing them in memory (may require lots of RAM)
+        :param overwrite: bool: if True, overwrites any existing output files, otherwise, raises an error
         :param verbose: bool: print progress statements
         :return: opens Dataset on self.data
         """
@@ -81,15 +102,15 @@ class Preprocessor(object):
                 ds = ds.drop(v)
         n_sample, n_var, n_level, n_lat, n_lon = (len(all_dates) - 1, len(variables), len(levels),
                                                   ds.dims['lat'], ds.dims['lon'])
-        self.predictor_shape = (n_var, n_level, n_lat, n_lon)
-        self.n_features = np.prod(self.predictor_shape)
+        predictor_shape = (n_var, n_level, n_lat, n_lon)
+        n_features = np.prod(predictor_shape)
 
         # Sort into predictors and targets. If in_memory is false, write to netCDF.
         if not in_memory:
             if os.path.isfile(self._predictor_file) and not overwrite:
                 raise IOError("predictor file '%s' already exists" % self._predictor_file)
             if verbose:
-                print('Preprocessor.data_to_samples: creating output file %s' %self._predictor_file)
+                print('Preprocessor.data_to_samples: creating output file %s' % self._predictor_file)
             nc_fid = nc.Dataset(self._predictor_file, 'w')
             nc_fid.description = 'Training data for DLWP'
             nc_fid.setncattr('scaling', 'True' if scale_variables else 'False')
@@ -158,11 +179,11 @@ class Preprocessor(object):
                 else:
                     v_mean = 0.0
                     v_std = 1.0
-                for s in range(0, n_sample, batch_samples):
+                for i, s in enumerate(list(range(0, n_sample, batch_samples))):
                     idx = slice(s, min(s+batch_samples, n_sample))
                     idxp1 = slice(s+1, min(s+1+batch_samples, n_sample+1))
                     if verbose:
-                        print('Preprocessor.data_to_samples: writing batch %s of %s' % (s+1, n_sample/batch_samples+1))
+                        print('Preprocessor.data_to_samples: writing batch %s of %s' % (i, n_sample//batch_samples+1))
                     predictors[idx, v, l, ...] = (ds[var].isel(time=idx, level=l).values - v_mean) / v_std
                     targets[idx, v, l, ...] = (ds[var].isel(time=idxp1, level=l).values - v_mean) / v_std
 
@@ -207,8 +228,6 @@ class Preprocessor(object):
         :param kwargs: passed to xarray.open_dataset()
         """
         self.data = xr.open_dataset(self._predictor_file, **kwargs)
-        self.predictor_shape = self.data.predictors.shape[1:]
-        self.n_features = np.prod(self.predictor_shape)
 
     def close(self):
         """
@@ -216,8 +235,6 @@ class Preprocessor(object):
         """
         self.data.close()
         self.data = None
-        self.predictor_shape = ()
-        self.n_features = None
 
     def to_file(self, predictor_file=None):
         """
