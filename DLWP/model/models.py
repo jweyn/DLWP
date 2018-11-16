@@ -35,7 +35,6 @@ class DLWPNeuralNet(object):
         :param apply_same_y_scaling: bool: if True, if the predictors and targets are the same shape (as for time
             series prediction), apply the same scaler to predictors and targets
         :param impute_missing: bool: if True, uses scikit-learn Imputer for missing values
-        :param add_time_axis: bool: if True, adds a time dimension for RNNs to predictor and target data
         """
         self.scaler_type = scaler_type
         self.scale_targets = scale_targets
@@ -68,30 +67,31 @@ class DLWPNeuralNet(object):
             raise TypeError("'gpus' argument must be an int")
         if type(layers) not in [list, tuple]:
             raise TypeError("'layers' argument must be a tuple")
-        for l in range(len(layers)):
-            layer = layers[l]
+        layers = [l for l in layers]
+        for l, layer in enumerate(layers):
             if type(layer) not in [list, tuple]:
                 raise TypeError("each element of 'layers' must be a tuple")
             if len(layer) != 3:
                 raise ValueError("each layer must be specified by three elements (name, args, kwargs)")
             if layer[1] is None:
-                layer[1] = ()
+                layer = [layer[0], (), layer[2]]
             if type(layer[1]) is not tuple:
                 raise TypeError("the 'args' element of layer %d must be a tuple" % l)
             if layer[2] is None:
-                layer[2] = {}
+                layer = [layer[0], layer[1], {}]
             if type(layer[2]) is not dict:
                 raise TypeError("the 'kwargs' element of layer %d must be a dict" % l)
+            layers[l] = layer
         # Self-explanatory
         util.make_keras_picklable()
         # Build a model, either on a single GPU or on a CPU to control multiple GPUs
         self.model = keras.models.Sequential()
-        for l in range(len(layers)):
-            layer = layers[l]
+        for l, layer in enumerate(layers):
             try:
                 layer_class = util.get_from_class('keras.layers', layer[0])
             except (ImportError, AttributeError):
-                layer_class = util.get_from_class('ensemble_net.util', layer[0])
+                # Maybe we've defined a custom layer, which would be in DLWP.util
+                layer_class = util.get_from_class('DLWP.util', layer[0])
             self.model.add(layer_class(*layer[1], **layer[2]))
         if gpus > 1:
             self.model = multi_gpu_model(self.model, gpus=gpus, cpu_relocation=True)
@@ -162,7 +162,7 @@ class DLWPNeuralNet(object):
         on a larger set of data before calls to the model 'fit' method with smaller sets of data and initialize=False.
 
         :param predictors: ndarray: predictor data
-        :param targets: ndarray: corresponding truth data
+        :param targets: ndarray: target data
         """
         if self.impute:
             self.imputer_fit(predictors, targets)
@@ -175,7 +175,7 @@ class DLWPNeuralNet(object):
         Fit the DLWPNeuralNet model. Also performs input feature scaling.
 
         :param predictors: ndarray: predictor data
-        :param targets: ndarray: corresponding truth data
+        :param targets: ndarray: target data
         :param initialize: bool: if True, initializes the Imputer and Scaler to the given predictors. 'fit' must be
             called with initialize=True the first time, or the Imputer and Scaler must be fit with 'init_fit'.
         :param kwargs: passed to the Keras 'fit' method
@@ -281,7 +281,7 @@ class DataGenerator(Sequence):
         :param batch_size: int: number of samples (days) to take at a time from the dataset
         :param shuffle: bool: if True, randomly select batches
         :param remove_nan: bool: if True, remove any samples with NaNs
-        :param convolution: bool: if True, prepares samples for convolutional
+        :param convolution: bool: if True, prepares samples for convolutional layers with 3 dimensions (channels, y, x)
         :param add_time_axis: bool: if True, add a time axis for use with Keras RNNs
         """
         self.model = model
@@ -302,7 +302,7 @@ class DataGenerator(Sequence):
     @property
     def spatial_shape(self):
         """
-        :return: the shape of the spatial component of ensemble predictors
+        :return: the shape of the spatial component of ensemble predictors (variable, level, lat, lon)
         """
         return self.ds.predictors.shape[1:]
 

@@ -8,21 +8,14 @@
 DLWP utilities.
 """
 
-from datetime import datetime
-import types
 import pickle
 import tempfile
 from copy import copy
 import numpy as np
 
 import keras.models
-from keras.legacy import interfaces
-from keras.utils import conv_utils
-from keras.engine import InputSpec
-from keras.engine import Layer
 from keras.callbacks import Callback
 from keras import backend as K
-from keras import activations, initializers, regularizers, constraints
 
 
 # ==================================================================================================================== #

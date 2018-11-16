@@ -102,8 +102,10 @@ class Preprocessor(object):
                 ds = ds.drop(v)
         n_sample, n_var, n_level, n_lat, n_lon = (len(all_dates) - 1, len(variables), len(levels),
                                                   ds.dims['lat'], ds.dims['lon'])
-        predictor_shape = (n_var, n_level, n_lat, n_lon)
-        n_features = np.prod(predictor_shape)
+
+        # Arrays for scaling parameters
+        means = np.zeros((n_var, n_level), dtype=np.float32)
+        stds = np.ones((n_var, n_level), dtype=np.float32)
 
         # Sort into predictors and targets. If in_memory is false, write to netCDF.
         if not in_memory:
@@ -169,13 +171,15 @@ class Preprocessor(object):
         for v, var in enumerate(variables):
             for l, lev in enumerate(levels):
                 if verbose:
-                    print('Preprocessor.data_to_samples: variable %s of %s; level %s of %s' %
-                          (v+1, len(variables), l+1, len(levels)))
+                    print('Preprocessor.data_to_samples: variable %s of %s (%s); level %s of %s (%s)' %
+                          (v+1, len(variables), var, l+1, len(levels), lev))
                 if scale_variables:
                     if verbose:
                         print('Preprocessor.data_to_samples: calculating mean and std')
                     v_mean = mean_by_batch(ds[var].isel(level=l), batch_samples)
                     v_std = std_by_batch(ds[var].isel(level=l), batch_samples, mean=v_mean)
+                    means[v, l] = 1. * v_mean
+                    stds[v, l] = 1. * v_std
                 else:
                     v_mean = 0.0
                     v_std = 1.0
@@ -183,11 +187,27 @@ class Preprocessor(object):
                     idx = slice(s, min(s+batch_samples, n_sample))
                     idxp1 = slice(s+1, min(s+1+batch_samples, n_sample+1))
                     if verbose:
-                        print('Preprocessor.data_to_samples: writing batch %s of %s' % (i, n_sample//batch_samples+1))
+                        print('Preprocessor.data_to_samples: writing batch %s of %s' % (i+1, n_sample//batch_samples+1))
                     predictors[idx, v, l, ...] = (ds[var].isel(time=idx, level=l).values - v_mean) / v_std
                     targets[idx, v, l, ...] = (ds[var].isel(time=idxp1, level=l).values - v_mean) / v_std
 
         if not in_memory:
+            # Create means and stds variables
+            nc_var = nc_fid.createVariable('mean', np.float32, ('variable', 'level'))
+            nc_var.setncatts({
+                'long_name': 'Global mean of variables at levels',
+                'units': 'N/A',
+            })
+            nc_var[:] = means
+
+            nc_var = nc_fid.createVariable('std', np.float32, ('variable', 'level'))
+            nc_var.setncatts({
+                'long_name': 'Global std deviation of variables at levels',
+                'units': 'N/A',
+            })
+            nc_var[:] = stds
+
+            # Close and re-open as xarray Dataset
             nc_fid.close()
             result_ds = xr.open_dataset(self._predictor_file)
         else:
@@ -200,6 +220,14 @@ class Preprocessor(object):
                     'long_name': 'Targets',
                     'units': 'N/A'
                 }),
+                'mean': (['variable', 'level'], means, {
+                    'long_name': 'Global mean of variables at levels',
+                    'units': 'N/A',
+                }),
+                'std': (['variable', 'level'], stds, {
+                    'long_name': 'Global std deviation of variables at levels',
+                    'units': 'N/A',
+                })
             }, coords={
                 'variable': ('variable', variables),
                 'level': ('level', levels, {
@@ -351,4 +379,3 @@ def std_by_batch(da, batch_size, axis=0, mean=None):
     for b in batches:
         total += np.sum((da.isel(**{dim: slice(b, min(b + batch_size, size))}).values - mean) ** 2.)
     return np.sqrt(total / da.size)
-

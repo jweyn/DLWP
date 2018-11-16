@@ -13,7 +13,6 @@ import numpy as np
 from DLWP.model import DLWPNeuralNet, DataGenerator, Preprocessor
 from DLWP.model.preprocessing import train_test_split_ind
 from DLWP.util import RNNResetStates, save_model
-from keras.layers import Dense
 from keras.regularizers import l2
 from keras.callbacks import History
 
@@ -22,7 +21,7 @@ from keras.callbacks import History
 
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
 predictor_file = '%s/cfs_2000-2009_hgt_500_NH.nc' % root_directory
-model_file = '%s/dlwp_clstm2500_2000-2009_hgt_500_NH' % root_directory
+model_file = '%s/dlwp_2000-2009_hgt_500_NH_CLSTM_16_5_2' % root_directory
 epochs = 50
 lambda_ = 1.e-3
 
@@ -53,11 +52,11 @@ val_generator = DataGenerator(dlwp, processor.data.isel(sample=val_set), batch_s
 #         'activation': 'tanh',
 #         'kernel_regularizer': l2(lambda_),
 #         'return_sequences': True,
-#         'input_shape': (1, int(generator.n_features))
+#         'input_shape': (1, generator.n_features)
 #     }),
-#     ('TimeDistributed', (Dense(int(generator.n_features), activation='linear'),), {
-#         'input_shape': (1, int(generator.n_features) // 2)
-#     })
+#     ('Flatten', None, None),
+#     ('Dense', (generator.n_features,), {'activation': 'linear'}),
+#     ('Reshape', ((1, generator.n_features),), None)
 # )
 
 # Convolutional LSTM (set add_time_axis=True and convolution=True for generators)
@@ -70,9 +69,9 @@ layers = (
         'data_format': 'channels_first',
         'input_shape': (1,) + generator.convolution_shape
     }),
-    ('Flatten', (), {}),
-    ('Dense', (generator.n_features,), {}),
-    ('Reshape', ((1,) + generator.convolution_shape,), {})
+    ('Flatten', None, None),
+    ('Dense', (generator.n_features,), None),
+    ('Reshape', ((1,) + generator.convolution_shape,), None)
 )
 
 # # Feed-forward dense neural network
@@ -109,6 +108,9 @@ p_fit, t_fit = generator.generate(fit_set, scale_and_impute=False)
 dlwp.init_fit(p_fit, t_fit)
 p_fit, t_fit = (None, None)
 
+# If system memory permits, loading the predictor data greatly increases efficiency when training on GPUs.
+# generator.ds.load()
+
 # Load the validation data. Better to load in memory to avoid file read errors while training.
 p_val, t_val = val_generator.generate([], scale_and_impute=False)
 
@@ -130,4 +132,4 @@ print('Test mean absolute error:', score[1])
 
 # Save the model
 if model_file is not None:
-    save_model(dlwp, model_file)
+    save_model(dlwp, model_file, history=history)
