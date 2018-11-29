@@ -14,7 +14,7 @@ from copy import copy
 import numpy as np
 
 import keras.models
-from keras.callbacks import Callback
+from keras.callbacks import Callback, EarlyStopping
 from keras import backend as K
 
 
@@ -172,3 +172,43 @@ class BatchHistory(Callback):
 class RNNResetStates(Callback):
     def on_epoch_begin(self, epoch, logs=None):
         self.model.reset_states()
+
+
+class EarlyStoppingMin(EarlyStopping):
+    """
+    Extends the keras.callbacks.EarlyStopping class to provide the option to force training for a minimum number of
+    epochs.
+    """
+    def __init__(self, min_epochs=0, **kwargs):
+        """
+        :param min_epochs: int: train the network for at least this number of epochs before early stopping
+        :param kwargs: passed to EarlyStopping.__init__()
+        """
+        super(EarlyStoppingMin, self).__init__(**kwargs)
+        if not isinstance(min_epochs, int) or min_epochs < 0:
+            raise ValueError('min_epochs must be an integer >= 0')
+        self.min_epochs = min_epochs
+
+    def on_epoch_end(self, epoch, logs=None):
+        if epoch < self.min_epochs:
+            return
+
+        current = self.get_monitor_value(logs)
+        if current is None:
+            return
+
+        if self.monitor_op(current - self.min_delta, self.best):
+            self.best = current
+            self.wait = 0
+            if self.restore_best_weights:
+                self.best_weights = self.model.get_weights()
+        else:
+            self.wait += 1
+            if self.wait >= self.patience:
+                self.stopped_epoch = epoch
+                self.model.stop_training = True
+                if self.restore_best_weights:
+                    if self.verbose > 0:
+                        print('Restoring model weights from the end of '
+                              'the best epoch')
+                    self.model.set_weights(self.best_weights)

@@ -13,8 +13,8 @@ from datetime import datetime
 import pandas as pd
 
 
-start_date = datetime(1990, 1, 1)
-end_date = datetime(1994, 12, 31)
+start_date = datetime(1979, 1, 1)
+end_date = datetime(1984, 12, 31)
 dates = list(pd.date_range(start_date, end_date, freq='D').to_pydatetime())
 variables = ['TMP', 'R H', 'HGT', 'U GRD', 'V GRD', 'V VEL']
 levels = [200, 250, 300, 500, 700, 850, 925, 1000]
