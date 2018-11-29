@@ -112,18 +112,24 @@ def save_model(model, file_name, history=None):
             pickle.dump(history.history, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def load_model(file_name):
+def load_model(file_name, history=False):
     """
     Loads a model saved to disk with the `save_model()` method.
 
     :param file_name: str: base name of save files
-    :return: model: loaded object
+    :param history: bool: if True, loads the history file along with the model
+    :return: model [, dict]: loaded object [, dictionary of training history]
     """
     with open('%s.pkl' % file_name, 'rb') as f:
         model = pickle.load(f)
     custom_layers = {}
     model.model = keras.models.load_model('%s.keras' % file_name, custom_objects=custom_layers, compile=True)
-    return model
+    if history:
+        with open('%s.history' % file_name, 'rb') as f:
+            h = pickle.load(f)
+        return model, h
+    else:
+        return model
 
 
 # ==================================================================================================================== #

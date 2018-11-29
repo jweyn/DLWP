@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 
 def plot_basemap(basemap, lon, lat, z=None, plot_type='contourf', plot_kwargs=None,
                  title=None, colorbar=True, colorbar_label=None, draw_grids=True,
-                 save_file=None, save_kwargs={}, width=6, height=4, ):
+                 save_file=None, save_kwargs=None, width=6, height=4, ):
     """
     Function for plot data on a given Basemap object.
 
@@ -34,8 +34,8 @@ def plot_basemap(basemap, lon, lat, z=None, plot_type='contourf', plot_kwargs=No
     :param height: int or float: height of output image
     :return: pyplot Figure object
     """
-    if plot_kwargs is None:
-        plot_kwargs = {}
+    plot_kwargs = plot_kwargs or {}
+    save_kwargs = save_kwargs or {}
     fig = plt.figure()
     plt.clf()
     plot_function = getattr(basemap, plot_type)
@@ -51,8 +51,8 @@ def plot_basemap(basemap, lon, lat, z=None, plot_type='contourf', plot_kwargs=No
     basemap.drawcountries(linewidth=0.7)
     basemap.drawstates(linewidth=0.4)
     if draw_grids:
-        basemap.drawmeridians(np.arange(0, 360, 10), linecolor='0.5')
-        basemap.drawparallels(np.arange(-90, 90, 10), linecolor='0.5')
+        basemap.drawmeridians(np.arange(0, 361, 30), linecolor='0.5')
+        basemap.drawparallels(np.arange(-90, 91, 30), linecolor='0.5')
     if title is not None:
         plt.title(title)
     fig.set_size_inches(width, height)
@@ -122,3 +122,42 @@ def slp_contour(fig, m, slp, lons, lats, window=100):
                          bbox=dict(boxstyle="square", ec='None', fc=(1, 1, 1, 0.5)))
                 xyplotted.append((x, y))
     return fig
+
+
+def plot_movie(m, lat, lon, val, pred, dates, model_title='', plot_kwargs=None, file_dir=None):
+    """
+    Plot a series of images for a forecast and the verification.
+
+    :param m: Basemap object
+    :param lat: ndarray (lat, lon): latitude values
+    :param lon: ndarray (lat, lon): longitude values
+    :param val: ndarray (t, lat, lon): verification
+    :param pred: ndarray (t, lat, lon): predicted forecast
+    :param dates: array-like: datetime objects of verification datetimes
+    :param model_title: str: name of the model, e.g., 'Neural net prediction'
+    :param plot_kwargs: dict: passed to the plot pcolormesh() method
+    :param file_dir: str: folder in which to save image files
+    """
+    if (len(dates) != val.shape[0]) and (len(dates) != pred.shape[0]):
+        raise ValueError("'val' and 'pred' must have the same first (time) dimension as 'dates'")
+    plot_kwargs = plot_kwargs or {}
+    fig = plt.figure()
+    fig.set_size_inches(6, 4)
+    x, y = m(lon, lat)
+    dt = dates[1] - dates[0]
+    for d, date in enumerate(dates):
+        hours = (d + 1) * dt.total_seconds() / 60 / 60
+        ax = plt.subplot(211)
+        m.pcolormesh(x, y, val[d], **plot_kwargs)
+        m.drawcoastlines()
+        m.drawparallels(np.arange(0., 91., 45.))
+        m.drawmeridians(np.arange(0., 361., 90.))
+        ax.set_title('Verification (%s)' % date)
+        ax = plt.subplot(212)
+        m.pcolormesh(x, y, pred[d], **plot_kwargs)
+        m.drawcoastlines()
+        m.drawparallels(np.arange(0., 91., 45.))
+        m.drawmeridians(np.arange(0., 361., 90.))
+        ax.set_title('%s at $t=%d$ (%s)' % (model_title, hours, date))
+        plt.savefig('%s/%05d.png' % (file_dir, d), bbox_inches='tight', dpi=150)
+        fig.clear()
