@@ -24,7 +24,7 @@ class DLWPNeuralNet(object):
     DLWP model class which uses a Keras Sequential neural network built to user specification.
     """
     def __init__(self, scaler_type='StandardScaler', scale_targets=True, apply_same_y_scaling=True,
-                 impute_missing=False):
+                 impute_missing=False, is_recurrent=False):
         """
         Initialize an instance of DLWPNeuralNet.
 
@@ -35,6 +35,7 @@ class DLWPNeuralNet(object):
         :param apply_same_y_scaling: bool: if True, if the predictors and targets are the same shape (as for time
             series prediction), apply the same scaler to predictors and targets
         :param impute_missing: bool: if True, uses scikit-learn Imputer for missing values
+        :param is_recurrent: bool: if True, add a recurrent time axis to the model
         """
         self.scaler_type = scaler_type
         self.scale_targets = scale_targets
@@ -44,6 +45,7 @@ class DLWPNeuralNet(object):
         self.impute = impute_missing
         self.imputer = None
         self.imputer_y = None
+        self.is_recurrent = is_recurrent
 
         self.model = None
         self.is_parallel = False
@@ -271,8 +273,7 @@ class DataGenerator(Sequence):
     of the EnsembleSelector to do scaling and imputing of data.
     """
 
-    def __init__(self, model, ds, batch_size=32, shuffle=False, remove_nan=True, convolution=False,
-                 add_time_axis=False):
+    def __init__(self, model, ds, batch_size=32, shuffle=False, remove_nan=True, convolution=False):
         """
         Initialize a DataGenerator.
 
@@ -282,7 +283,6 @@ class DataGenerator(Sequence):
         :param shuffle: bool: if True, randomly select batches
         :param remove_nan: bool: if True, remove any samples with NaNs
         :param convolution: bool: if True, prepares samples for convolutional layers with 3 dimensions (channels, y, x)
-        :param add_time_axis: bool: if True, add a time axis for use with Keras RNNs
         """
         self.model = model
         if not hasattr(ds, 'predictors') or not hasattr(ds, 'targets'):
@@ -292,7 +292,7 @@ class DataGenerator(Sequence):
         self._shuffle = shuffle
         self._remove_nan = remove_nan
         self._convolution = convolution
-        self._add_time_axis = add_time_axis
+        self._add_time_axis = self.model.is_recurrent
         self._impute_missing = self.model.impute
         self._indices = []
         self._n_sample = ds.dims['sample']
