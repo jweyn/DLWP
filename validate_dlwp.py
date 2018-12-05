@@ -14,6 +14,7 @@ from DLWP.util import load_model
 from DLWP.model.preprocessing import train_test_split_ind
 import keras.backend as K
 import numpy as np
+import xarray as xr
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 from mpl_toolkits.basemap import Basemap
@@ -26,17 +27,23 @@ root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
 predictor_file = '%s/cfs_1979-2010_hgt-tmp_250-500-1000_NH.nc' % root_directory
 
 # Names of model files, located in the root_directory
-models = ['dlwp_1979-2010_hgt-tmp_250-500-1000_NH_CONV_64x5x1_16x5x2_MP',
-          'dlwp_1979-2010_hgt-tmp_250-500-1000_NH_CONV_16x5x1_16x5x2_16x3x1_MP']
-model_labels = ['Conv_64-16', 'Conv_16-16-16x3']
+models = ['dlwp_1979-2010_hgt-tmp_250-500-1000_NH_CONV_16_5_2_MP',
+          'dlwp_1979-2010_hgt-tmp_250-500-1000_NH_CLSTM_16_5_2_MP']
+model_labels = ['Conv', 'ConvLSTM']
+
+# Load the result of a barotropic model for comparison
+baro_model_file = '%s/barotropic_2007-2010.nc' % root_directory
+baro_ds = xr.open_dataset(baro_model_file)
+baro_ds = baro_ds.isel(lat=(baro_ds.lat >= 0.0))  # Northern hemisphere only
 
 # Number of validation samples. For example, 2 years of 6-hourly data is 4 * (365 + 366) if one is a leap year.
-n_val = 4 * (365 + 365)
+n_val = 4 * (365*3 + 366)
 
 # Number of forward integration weather forecast time steps
 num_forecast_steps = 24
 
-# Calculate for a specific variable index. If None, then averages all variables.
+# Calculate statistics for a specific variable index. If None, then averages all variables. Cannot be None if using a
+# barotropic model for comparison (specify the index of Z500).
 variable_index = 1
 
 # Do specific plots
@@ -46,8 +53,8 @@ plot_example_date = datetime(2009, 1, 1)
 plot_example_f_hour = 48  # Forecast hour index of the sample
 plot_history = True
 plot_mse = True
-mse_title = 'Forecast MSE 2009-10, $\hat{Z}$ 500 NH'
-mse_file_name = 'mse_Conv_64_Conv_16_250-500-1000.pdf'
+mse_title = 'Forecast MSE 2007-10, $\hat{Z}$ 500 NH'
+mse_file_name = 'mse_Conv_ConvLSTM_250-500-1000.pdf'
 
 
 #%% Define some plotting functions
@@ -136,7 +143,7 @@ for m, model in enumerate(models):
     if not hasattr(dlwp, 'is_recurrent'):
         dlwp.is_recurrent = False
         for layer in dlwp.model.layers:
-            if 'LSTM' in layer.name.upper():
+            if 'LSTM' in layer.name.upper() or 'LST_M' in layer.name.upper():
                 dlwp.is_recurrent = True
     recurrent_axis = slice(None) if dlwp.is_recurrent else None
 
@@ -179,14 +186,48 @@ for m, model in enumerate(models):
 
     # Clear the model
     dlwp = None
+    time_series = None
     K.clear_session()
 
 
-# Plot the combined MSE as a function of forecast hour for all models
+#%% Add Barotropic model, persistence, and climatology
+
+if baro_ds is not None:
+    print('Loading barotropic model data from %s...' % baro_model_file)
+    print('I hope you selected only the variable corresponding to Z500!')
+    baro_values = baro_ds.variables['Z'].values
+
+    # Normalize by the same std and mean as the predictor dataset
+    var_idx = variable_index // processor.data.dims['level']
+    lev_idx = variable_index % processor.data.dims['level']
+    z500_mean = processor.data.isel(variable=var_idx, level=lev_idx).variables['mean'].values
+    z500_std = processor.data.isel(variable=var_idx, level=lev_idx).variables['std'].values
+    baro_values = (baro_values - z500_mean) / z500_std
+
+    # The barotropic model is initialized at exactly all 6-hourly dates within the last 4 years, but the predictor
+    # file samples must exclude the last (2010-12-31 18) forecast init date, because it doesn't have a target sample.
+    # Hence we shift the init_dates to match.
+    mse.append(verify.forecast_error(baro_values[:, :-1], t_val.squeeze()[1:, variable_index]))
+    model_labels.append('Barotropic')
+
+print('Calculating persistence forecasts...')
+mse.append(verify.persistence_error(p_val, t_val, num_forecast_steps))
+model_labels.append('Persistence')
+
+print('Calculating climatology forecasts...')
+mse.append(verify.climo_error(t_val, num_forecast_steps))
+model_labels.append('Climatology')
+
+
+#%% Plot the combined MSE as a function of forecast hour for all models
+
 fig = plt.figure()
 fig.set_size_inches(6, 4)
 for m, model in enumerate(model_labels):
-    plt.plot(f_hour, mse[m], label=model, linewidth=2.)
+    if model != 'Barotropic':
+        plt.plot(f_hour, mse[m], label=model, linewidth=2.)
+    else:
+        plt.plot(baro_ds.f_hour, mse[m], label=model, linewidth=2.)
 plt.legend(loc='best')
 plt.grid(True, color='lightgray', zorder=-100)
 plt.xlabel('forecast hour')

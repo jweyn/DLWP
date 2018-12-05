@@ -16,14 +16,14 @@ import numpy as np
 import xarray as xr
 
 
-start_date = datetime(2009, 1, 1)
-end_date = datetime(2009, 1, 1)
+start_date = datetime(2007, 1, 1)
+end_date = datetime(2008, 12, 31)
 dates = list(pd.date_range(start_date, end_date, freq='D').to_pydatetime())
 level = 500
 baro_dt = 1
 baro_step_hours = 6
 baro_run_hours = 144
-output_file = '/home/disk/wave2/jweyn/Data/DLWP/barotropic_2009-2010.nc'
+output_file = '/home/disk/wave2/jweyn/Data/DLWP/barotropic_2007-2008.nc'
 
 cfs = CFSReanalysis(root_directory='/home/disk/wave2/jweyn/Data/CFSR', file_id='dlwp_')
 cfs.set_dates(dates)
@@ -43,7 +43,6 @@ for init_time in cfs.Dataset.time.values:
     out_count = 0
     for step in np.arange(0, baro_run_hours, baro_dt):
         baro.step_forward()
-        print(step, np.max(baro.z_grid))
         if step % baro_step_hours == 0:
             result[out_count, init_count] = baro.z_grid[:]
             out_count += 1

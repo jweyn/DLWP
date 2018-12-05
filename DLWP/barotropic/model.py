@@ -129,8 +129,8 @@ class BarotropicModel(object):
             dt = self.dt
         else:
             dt = 2 * self.dt
-        dudt = -(self.f + self.vrt_grid) * self.v_grid
-        dvdt = (self.f + self.vrt_grid) * self.u_grid
+        dudt = -(self.f + self.vrt_grid) * self.v_grid  # @jweyn
+        dvdt = (self.f + self.vrt_grid) * self.u_grid  # @jweyn
         dzetadt, _ = self.engine.vrtdiv_spec_from_uv_grid(dudt, dvdt)
         coeffs = 1. / (1. + self.damping * self.dt)
         dzetadt = coeffs * (dzetadt - self.damping * self.vrt_spec_prev)

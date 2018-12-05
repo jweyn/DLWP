@@ -35,10 +35,11 @@ def forecast_error(forecast, valid, method='mse', axis=None):
     return np.array(me)
 
 
-def persistence_error(valid, n_fhour, method='mse', axis=None):
+def persistence_error(predictors, valid, n_fhour, method='mse', axis=None):
     """
     Calculate the error of a persistence forecast out to n_fhour forecast hours.
 
+    :param predictors: ndarray: predictor data
     :param valid: ndarray: validation target data
     :param n_fhour: int: number of steps to take forecast out to
     :param method: 'mse' for mean squared error or 'mae' for mean absolute error
@@ -52,9 +53,9 @@ def persistence_error(valid, n_fhour, method='mse', axis=None):
     me = []
     for f in range(n_fhour):
         if method == 'mse':
-            me.append(np.mean((valid[:(n_f - f)] - valid[f:]) ** 2., axis=axis))
+            me.append(np.mean((valid[f:] - predictors[:(n_f - f)]) ** 2., axis=axis))
         elif method == 'mae':
-            me.append(np.mean(np.abs(valid[:(n_f - f)] - valid[f:]), axis=axis))
+            me.append(np.mean(np.abs(valid[f:] - predictors[:(n_f - f)]), axis=axis))
     return np.array(me)
 
 
