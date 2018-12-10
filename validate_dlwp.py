@@ -52,6 +52,7 @@ plot_example = None  # None to disable or the index of the sample
 plot_example_date = datetime(2009, 1, 1)
 plot_example_f_hour = 48  # Forecast hour index of the sample
 plot_history = True
+plot_zonal = True
 plot_mse = True
 mse_title = 'Forecast MSE 2007-10, $\hat{Z}$ 500 NH'
 mse_file_name = 'mse_Conv_ConvLSTM_250-500-1000.pdf'
@@ -73,29 +74,39 @@ def history_plot(train_hist, val_hist, model_name):
     plt.show()
 
 
-def example_plot(base, verif, forecast, model_name):
+def example_plot(base, verif, forecast, model_name, plot_diff=True):
     # Plot an example forecast
     lons, lats = np.meshgrid(processor.data.lon, processor.data.lat)
     fig = plt.figure()
-    fig.set_size_inches(6, 6)
+    fig.set_size_inches(9, 9)
     m = Basemap(llcrnrlon=0., llcrnrlat=0., urcrnrlon=360., urcrnrlat=90.,
                 resolution='l', projection='cyl', lat_0=40., lon_0=0.)
     x, y = m(lons, lats)
     ax = plt.subplot(311)
-    m.pcolormesh(x, y, base, vmin=-2.5, vmax=1.5, cmap='YlGnBu_r')
+    if plot_diff:
+        m.contour(x, y, base, np.arange(-2.5, 1.6, 0.5), cmap='jet')
+    else:
+        m.pcolormesh(x, y, base, vmin=-2.5, vmax=1.5, cmap='YlGnBu_r')
     m.drawcoastlines()
     m.drawparallels(np.arange(0., 91., 45.))
     m.drawmeridians(np.arange(0., 361., 90.))
-    ax.set_title('$t=%d$ predictors (%s)' % (plot_example_f_hour, plot_example_date))
+    ax.set_title('$t=0$ predictors (%s)' % plot_example_date)
     ax = plt.subplot(312)
-    m.pcolormesh(x, y, verif, vmin=-2.5, vmax=1.5, cmap='YlGnBu_r')
+    if plot_diff:
+        m.contour(x, y, verif, np.arange(-2.5, 1.6, 0.5), cmap='jet')
+    else:
+        m.pcolormesh(x, y, verif, vmin=-2.5, vmax=1.5, cmap='YlGnBu_r')
     m.drawcoastlines()
     m.drawparallels(np.arange(0., 91., 45.))
     m.drawmeridians(np.arange(0., 361., 90.))
     forecast_time = plot_example_date + timedelta(hours=plot_example_f_hour)
     ax.set_title('$t=%d$ verification (%s)' % (plot_example_f_hour, forecast_time))
     ax = plt.subplot(313)
-    m.pcolormesh(x, y, forecast, vmin=-2.5, vmax=1.5, cmap='YlGnBu_r')
+    if plot_diff:
+        m.contour(x, y, forecast, np.arange(-2.5, 1.6, 0.5), cmap='jet')
+        m.pcolormesh(x, y, forecast - verif, vmin=-1, vmax=1, cmap='seismic')
+    else:
+        m.pcolormesh(x, y, forecast, vmin=-2.5, vmax=1.5, cmap='YlGnBu_r')
     # plt.colorbar(orientation='horizontal')
     m.drawcoastlines()
     m.drawparallels(np.arange(0., 91., 45.))
@@ -146,9 +157,14 @@ for m, model in enumerate(models):
             if 'LSTM' in layer.name.upper() or 'LST_M' in layer.name.upper():
                 dlwp.is_recurrent = True
     recurrent_axis = slice(None) if dlwp.is_recurrent else None
+    if 'CONV' in dlwp.model.layers[0].name.upper():
+        is_convolution = True
+    else:
+        is_convolution = False
 
     # Create data generators
-    val_generator = DataGenerator(dlwp, processor.data.isel(sample=val_set), batch_size=216, convolution=True)
+    val_generator = DataGenerator(dlwp, processor.data.isel(sample=val_set), batch_size=216,
+                                  convolution=is_convolution)
     p_val, t_val = val_generator.generate([], scale_and_impute=False)
 
     # Make a time series prediction
@@ -156,7 +172,8 @@ for m, model in enumerate(models):
     time_series = dlwp.predict_timeseries(p_val, num_forecast_steps)
 
     # Calculate the MSE for each forecast hour relative to observations
-    variable_index = variable_index or slice(None)
+    if variable_index is None:
+        variable_index = slice(None)
     mse.append(verify.forecast_error(time_series[:, :, recurrent_axis, variable_index],
                                      t_val[:, recurrent_axis, variable_index]))
 
@@ -169,20 +186,21 @@ for m, model in enumerate(models):
 
     # Plot an example
     if plot_example is not None:
-        example_plot(p_val[plot_example, recurrent_axis, variable_index],
-                     p_val[plot_example + plot_example_f_hour // 6, recurrent_axis, variable_index],
-                     time_series[plot_example_f_hour // 6, plot_example, recurrent_axis, variable_index],
+        example_plot(p_val[plot_example, recurrent_axis, variable_index].squeeze(),
+                     p_val[plot_example + plot_example_f_hour // 6 - 1, recurrent_axis, variable_index].squeeze(),
+                     time_series[plot_example_f_hour // 6 - 1, plot_example, recurrent_axis, variable_index].squeeze(),
                      model_labels[m])
 
     # Plot the zonal climatology of the last forecast hour
-    obs_zonal_mean = np.mean(p_val[num_forecast_steps:, recurrent_axis, variable_index], axis=(0, -1)).squeeze()
-    obs_zonal_std = np.mean(np.std(p_val[num_forecast_steps:, recurrent_axis, variable_index], axis=-1),
-                            axis=0).squeeze()
-    pred_zonal_mean = np.mean(time_series[-1, :-num_forecast_steps, recurrent_axis, variable_index],
-                              axis=(0, -1)).squeeze()
-    pred_zonal_std = np.mean(np.std(time_series[-1, :-num_forecast_steps, recurrent_axis, variable_index], axis=-1),
-                             axis=0).squeeze()
-    zonal_mean_plot(obs_zonal_mean, obs_zonal_std, pred_zonal_mean, pred_zonal_std, model_labels[m])
+    if plot_zonal:
+        obs_zonal_mean = np.mean(p_val[num_forecast_steps:, recurrent_axis, variable_index], axis=(0, -1)).squeeze()
+        obs_zonal_std = np.mean(np.std(p_val[num_forecast_steps:, recurrent_axis, variable_index], axis=-1),
+                                axis=0).squeeze()
+        pred_zonal_mean = np.mean(time_series[-1, :-num_forecast_steps, recurrent_axis, variable_index],
+                                  axis=(0, -1)).squeeze()
+        pred_zonal_std = np.mean(np.std(time_series[-1, :-num_forecast_steps, recurrent_axis, variable_index], axis=-1),
+                                 axis=0).squeeze()
+        zonal_mean_plot(obs_zonal_mean, obs_zonal_std, pred_zonal_mean, pred_zonal_std, model_labels[m])
 
     # Clear the model
     dlwp = None
@@ -207,15 +225,17 @@ if baro_ds is not None:
     # The barotropic model is initialized at exactly all 6-hourly dates within the last 4 years, but the predictor
     # file samples must exclude the last (2010-12-31 18) forecast init date, because it doesn't have a target sample.
     # Hence we shift the init_dates to match.
-    mse.append(verify.forecast_error(baro_values[:, :-1], t_val.squeeze()[1:, variable_index]))
+    mse.append(verify.forecast_error(baro_values[:, :-1], t_val[1:, recurrent_axis, variable_index].squeeze()))
     model_labels.append('Barotropic')
 
 print('Calculating persistence forecasts...')
-mse.append(verify.persistence_error(p_val, t_val, num_forecast_steps))
+mse.append(verify.persistence_error(p_val[:, recurrent_axis, variable_index].squeeze(),
+                                    t_val[:, recurrent_axis, variable_index].squeeze(),
+                                    num_forecast_steps))
 model_labels.append('Persistence')
 
 print('Calculating climatology forecasts...')
-mse.append(verify.climo_error(t_val, num_forecast_steps))
+mse.append(verify.climo_error(t_val.squeeze()[:, variable_index], num_forecast_steps))
 model_labels.append('Climatology')
 
 
