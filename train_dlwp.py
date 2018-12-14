@@ -12,7 +12,8 @@ import time
 import numpy as np
 from DLWP.model import DLWPNeuralNet, DataGenerator, Preprocessor
 from DLWP.model.preprocessing import train_test_split_ind
-from DLWP.util import RNNResetStates, EarlyStoppingMin, save_model
+from DLWP.util import save_model
+from DLWP.custom import RNNResetStates, EarlyStoppingMin
 from keras.regularizers import l2
 from keras.callbacks import History
 
@@ -21,7 +22,7 @@ from keras.callbacks import History
 
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
 predictor_file = '%s/cfs_1979-2010_hgt-tmp_250-500-1000_NH.nc' % root_directory
-model_file = '%s/dlwp_1979-2010_hgt-tmp_250-500-1000_NH_CONV_64x5x1_16x5x2_MP' % root_directory
+model_file = '%s/dlwp_1979-2010_hgt-tmp_250-500-1000_NH_CONV_64to128to6_PBC' % root_directory
 model_is_recurrent = False
 min_epochs = 75
 max_epochs = 200
@@ -63,11 +64,15 @@ val_generator = DataGenerator(dlwp, processor.data.isel(sample=val_set), batch_s
 #     ('Reshape', ((1, generator.n_features),), None)
 # )
 
-# # Convolutional LSTM (set add_time_axis=True and convolution=True for generators)
+# # Convolutional LSTM (set convolution=True for generators)
 # layers = (
-#     ('ConvLSTM2D', (24, 5), {
-#         'strides': 1,
-#         'padding': 'same',
+#     ('Reshape', (generator.convolution_shape,), {'input_shape': (1,) + generator.convolution_shape}),
+#     ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
+#     ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
+#     ('Reshape', ((1, 3, 41, 148),), None),
+#     ('ConvLSTM2D', (16, 5), {
+#         'strides': 2,
+#         'padding': 'valid',
 #         'activation': 'tanh',
 #         'kernel_regularizer': l2(lambda_),
 #         'return_sequences': True,
@@ -76,8 +81,8 @@ val_generator = DataGenerator(dlwp, processor.data.isel(sample=val_set), batch_s
 #         # 'batch_input_shape': (batch_size, 1,) + generator.convolution_shape,
 #         'input_shape': (1,) + generator.convolution_shape
 #     }),
-#     ('Reshape', ((24, 37, 144),), None),
-#     ('MaxPooling2D', (4,), {'data_format': 'channels_first'}),
+#     # ('Reshape', (generator.convolution_shape,), None),
+#     ('Cropping3D', ((0, 1, 1),), {'data_format': 'channels_first'}),
 #     ('Flatten', None, None),
 #     ('Dense', (generator.n_features,), {'activation': 'linear'}),
 #     ('Reshape', ((1,) + generator.convolution_shape,), None)
@@ -85,25 +90,36 @@ val_generator = DataGenerator(dlwp, processor.data.isel(sample=val_set), batch_s
 
 # Convolutional feed-forward (set convolution=True for generators)
 layers = (
+    ('PeriodicPadding2D', ((0, 5),), {
+        'data_format': 'channels_first',
+        'input_shape': generator.convolution_shape,
+    }),
+    ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
     ('Conv2D', (64, 5), {
         'strides': 1,
-        'padding': 'same',
+        'padding': 'valid',
         'activation': 'tanh',
         'kernel_regularizer': l2(lambda_),
         'data_format': 'channels_first',
-        'input_shape': generator.convolution_shape
+        # 'input_shape': generator.convolution_shape
     }),
-    ('Conv2D', (16, 5), {
-        'strides': 2,
-        'padding': 'same',
+    ('ZeroPadding2D', ((1, 0),), {'data_format': 'channels_first'}),
+    ('Conv2D', (128, 3), {
+        'strides': 1,
+        'padding': 'valid',
         'activation': 'tanh',
         'kernel_regularizer': l2(lambda_),
         'data_format': 'channels_first',
     }),
-    ('MaxPooling2D', (2,), {'data_format': 'channels_first'}),
-    ('Flatten', None, None),
-    ('Dense', (generator.n_features,), {'activation': 'linear'}),
-    ('Reshape', (generator.convolution_shape,), None)
+    ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
+    ('Conv2D', (6, 5), {
+        'strides': 1,
+        'padding': 'valid',
+        'activation': 'tanh',
+        'kernel_regularizer': l2(lambda_),
+        'data_format': 'channels_first',
+    }),
+    # ('Reshape', (generator.convolution_shape,), None)
 )
 
 # # Feed-forward dense neural network
@@ -118,6 +134,7 @@ layers = (
 # )
 
 dlwp.build_model(layers, loss='mse', optimizer='adam', metrics=['mae'])
+print(dlwp.model.summary())
 
 
 #%% Load the scaling and validating data
@@ -125,7 +142,7 @@ dlwp.build_model(layers, loss='mse', optimizer='adam', metrics=['mae'])
 # Generate the data to fit the scaler and imputer. The generator will by default apply scaling because it is necessary
 # to automate its use in the Keras fit_generator method, so disable it when dealing with data to fit the scaler and
 # imputer. If using pre-scaled data (i.e., dlwp was initialized with scaler_type=None and the Preprocessor data was
-# generated with scale_variables=True), this step becomes academic.
+# generated with scale_variables=True), this step should be omitted.
 fit_set = train_set[:2]  # Use a much larger value when it matters
 p_fit, t_fit = generator.generate(fit_set, scale_and_impute=False)
 dlwp.init_fit(p_fit, t_fit)

@@ -92,8 +92,8 @@ class DLWPNeuralNet(object):
             try:
                 layer_class = util.get_from_class('keras.layers', layer[0])
             except (ImportError, AttributeError):
-                # Maybe we've defined a custom layer, which would be in DLWP.util
-                layer_class = util.get_from_class('DLWP.util', layer[0])
+                # Maybe we've defined a custom layer, which would be in DLWP.custom
+                layer_class = util.get_from_class('DLWP.custom', layer[0])
             self.model.add(layer_class(*layer[1], **layer[2]))
         if gpus > 1:
             self.model = multi_gpu_model(self.model, gpus=gpus, cpu_relocation=True)

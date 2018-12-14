@@ -10,12 +10,9 @@ DLWP utilities.
 
 import pickle
 import tempfile
+from importlib import import_module
 from copy import copy
-import numpy as np
-
 import keras.models
-from keras.callbacks import Callback, EarlyStopping
-from keras import backend as K
 
 
 # ==================================================================================================================== #
@@ -91,6 +88,21 @@ def get_from_class(module_name, class_name):
     return class_obj
 
 
+def get_classes(module_name):
+    """
+    From a given module name, return a dictionary {class_name: class_object} of its classes.
+
+    :param module_name: str: name of module to import
+    :return: dict: {class_name: class_object} pairs in the module
+    """
+    module = import_module(module_name)
+    classes = {}
+    for key in dir(module):
+        if isinstance(getattr(module, key), type):
+            classes[key] = get_from_class(module_name, key)
+    return classes
+
+
 def save_model(model, file_name, history=None):
     """
     Saves a class instance with a 'model' attribute to disk. Creates two files: one pickle file containing no model
@@ -122,7 +134,7 @@ def load_model(file_name, history=False):
     """
     with open('%s.pkl' % file_name, 'rb') as f:
         model = pickle.load(f)
-    custom_layers = {}
+    custom_layers = get_classes('DLWP.custom')
     model.model = keras.models.load_model('%s.keras' % file_name, custom_objects=custom_layers, compile=True)
     if history:
         with open('%s.history' % file_name, 'rb') as f:
@@ -132,89 +144,44 @@ def load_model(file_name, history=False):
         return model
 
 
-# ==================================================================================================================== #
-# Custom Keras classes
-# ==================================================================================================================== #
-
-class AdamLearningRateTracker(Callback):
-    def on_epoch_end(self, epoch, logs=None, beta_1=0.9, beta_2=0.999,):
-        optimizer = self.model.optimizer
-        it = K.cast(optimizer.iterations, K.floatx())
-        lr = K.cast(optimizer.lr, K.floatx())
-        decay = K.cast(optimizer.decay, K.floatx())
-        t = K.eval(it + 1.)
-        new_lr = K.eval(lr * (1. / (1. + decay * it)))
-        lr_t = K.eval(new_lr * (K.sqrt(1. - K.pow(beta_2, t)) / (1. - K.pow(beta_1, t))))
-        print(' - LR: {:.6f}'.format(lr_t))
-
-
-class SGDLearningRateTracker(Callback):
-    def on_epoch_end(self, epoch, logs=None):
-        optimizer = self.model.optimizer
-        it = K.cast(optimizer.iterations, K.floatx())
-        lr = K.cast(optimizer.lr, K.floatx())
-        decay = K.cast(optimizer.decay, K.floatx())
-        new_lr = K.eval(lr * (1. / (1. + decay * it)))
-        print(' - LR: {:.6f}'.format(new_lr))
-
-
-class BatchHistory(Callback):
-    def on_train_begin(self, logs=None):
-        self.history = []
-        self.epoch = 0
-
-    def on_epoch_begin(self, epoch, logs=None):
-        self.history.append({})
-
-    def on_epoch_end(self, epoch, logs=None):
-        self.epoch += 1
-
-    def on_batch_end(self, batch, logs=None):
-        logs = logs or {}
-        for k, v in logs.items():
-            self.history[self.epoch].setdefault(k, []).append(v)
-
-
-class RNNResetStates(Callback):
-    def on_epoch_begin(self, epoch, logs=None):
-        self.model.reset_states()
-
-
-class EarlyStoppingMin(EarlyStopping):
+def save_torch_model(model, file_name, history=None):
     """
-    Extends the keras.callbacks.EarlyStopping class to provide the option to force training for a minimum number of
-    epochs.
+    Saves a DLWPTorchNN model to disk. Creates two files: one pickle file containing the DLWPTorchNN wrapper, saved as
+    ${file_name}.pkl, and one for the model saved as ${file_name}.torch. Use the `load_torch_model()` method to load
+    a model saved with this method.
+
+    :param model: DLWPTorchNN or other torch model to save
+    :param file_name: str: base name of save files
+    :param history: history of model to save; optional
+    :return:
     """
-    def __init__(self, min_epochs=0, **kwargs):
-        """
-        :param min_epochs: int: train the network for at least this number of epochs before early stopping
-        :param kwargs: passed to EarlyStopping.__init__()
-        """
-        super(EarlyStoppingMin, self).__init__(**kwargs)
-        if not isinstance(min_epochs, int) or min_epochs < 0:
-            raise ValueError('min_epochs must be an integer >= 0')
-        self.min_epochs = min_epochs
+    import torch
+    torch.save(model.model, '%s.torch' % file_name)
+    model_copy = copy(model)
+    model_copy.model = None
+    with open('%s.pkl' % file_name, 'wb') as f:
+        pickle.dump(model_copy, f, protocol=pickle.HIGHEST_PROTOCOL)
+    if history is not None:
+        with open('%s.history' % file_name, 'wb') as f:
+            pickle.dump(history, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    def on_epoch_end(self, epoch, logs=None):
-        if epoch < self.min_epochs:
-            return
 
-        current = self.get_monitor_value(logs)
-        if current is None:
-            return
+def load_torch_model(file_name, history=False):
+    """
+    Loads a DLWPTorchNN or other model using Torch saved to disk with the `save_torch_model()` method.
 
-        if self.monitor_op(current - self.min_delta, self.best):
-            self.best = current
-            self.wait = 0
-            if self.restore_best_weights:
-                self.best_weights = self.model.get_weights()
-        else:
-            self.wait += 1
-            if self.wait >= self.patience:
-                self.stopped_epoch = epoch
-                self.model.stop_training = True
-                if self.restore_best_weights:
-                    if self.verbose > 0:
-                        print('Restoring model weights from the end of '
-                              'the best epoch')
-                    self.model.set_weights(self.best_weights)
+    :param file_name: str: base name of save files
+    :param history: bool: if True, loads the history file along with the model
+    :return: model [, dict]: loaded object [, dictionary of training history]\
+    """
+    import torch
+    with open('%s.pkl' % file_name, 'rb') as f:
+        model = pickle.load(f)
+    model.model = torch.load('%s.torch' % file_name)
+    model.model.eval()
+    if history:
+        with open('%s.history' % file_name, 'rb') as f:
+            h = pickle.load(f)
+        return model, h
+    else:
+        return model
