@@ -13,6 +13,10 @@ from keras import backend as K
 from keras.layers.convolutional import ZeroPadding2D
 import tensorflow as tf
 
+try:
+    from s2cnn import S2Convolution, SO3Convolution
+except ImportError:
+    pass
 
 # ==================================================================================================================== #
 # Keras classes
