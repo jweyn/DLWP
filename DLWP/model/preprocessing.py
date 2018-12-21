@@ -59,13 +59,14 @@ class Preprocessor(object):
         """
         return (int(np.prod(self.data.predictors.shape[1:-2])),) + self.data.predictors.shape[-2:]
 
-    def data_to_samples(self, batch_samples=100, variables='all', levels='all', scale_variables=False,
+    def data_to_samples(self, time_step=1, batch_samples=100, variables='all', levels='all', scale_variables=False,
                         in_memory=False, overwrite=False, verbose=False):
         """
         Convert the data referenced by the data_obj in __init__ to samples ready for ingestion in a DLWP model. Write
         samples in batches of size batch_samples. The parameter scale_variables determines whether individual
         variable/level combinations are scaled and de-meaned by their spatially-averaged values.
 
+        :param time_step: int: the number of time steps to take for the predictors and targets
         :param batch_samples: int: number of samples in the time dimension to read and process at once
         :param variables: iter: list of variables to process; may be 'all' for all variables available
         :param levels: iter: list of integer pressure levels (mb); may be 'all'
@@ -75,6 +76,9 @@ class Preprocessor(object):
         :param verbose: bool: print progress statements
         :return: opens Dataset on self.data
         """
+        # Check time step parameter
+        if int(time_step) < 1:
+            raise ValueError("'time_step' must be >= 1")
         # Test that data is loaded
         if self.raw_data is None:
             raise ValueError('cannot process when no data_obj was supplied at initialization')
@@ -100,8 +104,10 @@ class Preprocessor(object):
         for v in vars_available:
             if v not in variables:
                 ds = ds.drop(v)
-        n_sample, n_var, n_level, n_lat, n_lon = (len(all_dates) - 1, len(variables), len(levels),
+        n_sample, n_var, n_level, n_lat, n_lon = (len(all_dates) - (2 * time_step - 1), len(variables), len(levels),
                                                   ds.dims['lat'], ds.dims['lon'])
+        if n_sample < 1:
+            raise ValueError('too many time steps for time dimension')
 
         # Arrays for scaling parameters
         means = np.zeros((n_var, n_level), dtype=np.float32)
@@ -117,6 +123,7 @@ class Preprocessor(object):
             nc_fid.description = 'Training data for DLWP'
             nc_fid.setncattr('scaling', 'True' if scale_variables else 'False')
             nc_fid.createDimension('sample', 0)
+            nc_fid.createDimension('time_step', time_step)
             nc_fid.createDimension('variable', n_var)
             nc_fid.createDimension('level', n_level)
             nc_fid.createDimension('lat', n_lat)
@@ -145,13 +152,15 @@ class Preprocessor(object):
             nc_fid.variables['lon'][:] = ds['lon'].values
 
             # Create predictors and targets variables
-            predictors = nc_fid.createVariable('predictors', np.float32, ('sample', 'variable', 'level', 'lat', 'lon'))
+            predictors = nc_fid.createVariable('predictors', np.float32,
+                                               ('sample', 'time_step', 'variable', 'level', 'lat', 'lon'))
             predictors.setncatts({
                 'long_name': 'Predictors',
                 'units': 'N/A',
                 '_FillValue': fill_value
             })
-            targets = nc_fid.createVariable('targets', np.float32, ('sample', 'variable', 'level', 'lat', 'lon'))
+            targets = nc_fid.createVariable('targets', np.float32,
+                                            ('sample', 'time_step', 'variable', 'level', 'lat', 'lon'))
             targets.setncatts({
                 'long_name': 'Targets',
                 'units': 'N/A',
@@ -163,11 +172,10 @@ class Preprocessor(object):
             if verbose:
                 print('Preprocessor.data_to_samples: loading data to memory')
             ds.load()
-            predictors = np.full((n_sample, n_var, n_level, n_lat, n_lon), np.nan, dtype=np.float32)
+            predictors = np.full((n_sample, time_step, n_var, n_level, n_lat, n_lon), np.nan, dtype=np.float32)
             targets = predictors.copy()
 
-        # Fill in the data. Each point gets filled with the target index 1 higher. Iterate by variable and level for
-        # scaling.
+        # Fill in the data. Go through time steps. Iterate by variable and level for scaling.
         for v, var in enumerate(variables):
             for l, lev in enumerate(levels):
                 if verbose:
@@ -184,12 +192,14 @@ class Preprocessor(object):
                     v_mean = 0.0
                     v_std = 1.0
                 for i, s in enumerate(list(range(0, n_sample, batch_samples))):
-                    idx = slice(s, min(s+batch_samples, n_sample))
-                    idxp1 = slice(s+1, min(s+1+batch_samples, n_sample+1))
                     if verbose:
                         print('Preprocessor.data_to_samples: writing batch %s of %s' % (i+1, n_sample//batch_samples+1))
-                    predictors[idx, v, l, ...] = (ds[var].isel(time=idx, level=l).values - v_mean) / v_std
-                    targets[idx, v, l, ...] = (ds[var].isel(time=idxp1, level=l).values - v_mean) / v_std
+                    idx = slice(s, min(s+batch_samples, n_sample))
+                    for t in range(time_step):
+                        idxp = slice(s+t, min(s+t+batch_samples, n_sample+t))
+                        idxt = slice(s+t+time_step, min(s+t+time_step+batch_samples, n_sample+t+time_step))
+                        predictors[idx, t, v, l, ...] = (ds[var].isel(time=idxp, level=l).values - v_mean) / v_std
+                        targets[idx, t, v, l, ...] = (ds[var].isel(time=idxt, level=l).values - v_mean) / v_std
 
         if not in_memory:
             # Create means and stds variables
@@ -212,11 +222,11 @@ class Preprocessor(object):
             result_ds = xr.open_dataset(self._predictor_file)
         else:
             result_ds = xr.Dataset({
-                'predictors': (['sample', 'variable', 'level', 'lat', 'lon'], predictors, {
+                'predictors': (['sample','time_step', 'variable', 'level', 'lat', 'lon'], predictors, {
                     'long_name': 'Predictors',
                     'units': 'N/A'
                 }),
-                'targets': (['sample', 'variable', 'level', 'lat', 'lon'], targets, {
+                'targets': (['sample', 'time_step', 'variable', 'level', 'lat', 'lon'], targets, {
                     'long_name': 'Targets',
                     'units': 'N/A'
                 }),

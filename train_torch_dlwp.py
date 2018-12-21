@@ -23,6 +23,7 @@ from s2cnn import s2_near_identity_grid
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
 predictor_file = '%s/cfs_1979-2010_hgt_250-500-1000.nc' % root_directory
 model_file = '%s/dlwp_1979-2010_hgt_250-500-1000_S2C_16' % root_directory
+model_is_convolutional = True
 model_is_recurrent = False
 min_epochs = 75
 max_epochs = 10
@@ -31,6 +32,10 @@ lambda_ = 1.e-3
 
 processor = Preprocessor(None, predictor_file=predictor_file)
 processor.open()
+if 'time_step' in processor.data.dims:
+    time_dim = processor.data.dims['time_step']
+else:
+    time_dim = 1
 # Re-grid to remove extra lat dimension and downscale in lon (needs to fit square for spherical convolutions)
 processor.data = processor.data.isel(lat=slice(0, -1), lon=slice(None, None, 2))
 
@@ -42,11 +47,12 @@ train_set, val_set = train_test_split_ind(n_sample, n_val, method='last')
 
 #%% Build a model and the data generators
 
-dlwp = DLWPTorchNN(scaler_type=None, scale_targets=False, is_recurrent=model_is_recurrent)
+dlwp = DLWPTorchNN(is_convolutional=model_is_convolutional, is_recurrent=model_is_recurrent, time_dim=time_dim,
+                   scaler_type=None, scale_targets=False)
 
 # Build the data generators
-generator = DataGenerator(dlwp, processor.data.isel(sample=train_set), batch_size=batch_size, convolution=True)
-val_generator = DataGenerator(dlwp, processor.data.isel(sample=val_set), batch_size=batch_size, convolution=True)
+generator = DataGenerator(dlwp, processor.data.isel(sample=train_set), batch_size=batch_size)
+val_generator = DataGenerator(dlwp, processor.data.isel(sample=val_set), batch_size=batch_size)
 
 
 #%% Compile the model structure with some generator data information

@@ -25,8 +25,27 @@ class DLWPTorchNN(object):
     DLWP model class which uses a torch.nn Module built to user specification.
     """
 
-    def __init__(self, scaler_type='StandardScaler', scale_targets=True, apply_same_y_scaling=True,
-                 impute_missing=False, is_recurrent=False):
+    def __init__(self, is_convolutional=False, is_recurrent=False, time_dim=1,
+                 scaler_type='StandardScaler', scale_targets=True, apply_same_y_scaling=True, impute_missing=False):
+        """
+        Initialize an instance of DLWPTorchNN.
+
+        :param is_convolutional: bool: if True, use spatial shapes for input and output of the model
+        :param is_recurrent: bool: if True, add a recurrent time axis to the model
+        :param time_dim: int: the number of time steps in the input and output of the model (int >= 1)
+        :param scaler_type: str: class of scikit-learn scaler to apply to the input data. If None is provided,
+            disables scaling.
+        :param scale_targets: bool: if True, also scale the target data. Necessary for optimizer evaluation if there
+            are large magnitude differences in the output features.
+        :param apply_same_y_scaling: bool: if True, if the predictors and targets are the same shape (as for time
+            series prediction), apply the same scaler to predictors and targets
+        :param impute_missing: bool: if True, uses scikit-learn Imputer for missing values
+        """
+        self.is_convolutional = is_convolutional
+        self.is_recurrent = is_recurrent
+        if int(time_dim) < 1:
+            raise ValueError("'time_dim' must be >= 1")
+        self.time_dim = time_dim
         self.scaler_type = scaler_type
         self.scale_targets = scale_targets
         self.apply_same_y_scaling = apply_same_y_scaling
@@ -35,7 +54,6 @@ class DLWPTorchNN(object):
         self.impute = impute_missing
         self.imputer = None
         self.imputer_y = None
-        self.is_recurrent = is_recurrent
 
         if scaler_type is None:
             self._is_init_fit = True
@@ -296,23 +314,40 @@ class DLWPTorchNN(object):
         else:
             return all_p
 
-    def predict_timeseries(self, predictors, time_steps):
+    def predict_timeseries(self, predictors, time_steps, use_time_dim=True, **kwargs):
         """
         Make a timeseries prediction with the DLWPNeuralNet model. Also performs input feature scaling. Forward predict
-        time_steps number of times.
+        time_steps number of time steps, intelligently using the time dimension to run the model time_steps/time_dim
+        number of times and returning a time series of concatenated steps. The option use_time_dim disables knowledge
+        of a time dimension (which is assumed to be the second axis). If the model is not recurrent, then it is
+        assumed that the second dimension can be reshaped to (self.time_dim, num_channels).
 
         :param predictors: ndarray: predictor data
-        :param time_steps: int: number of time steps to predict forward\
+        :param time_steps: int: number of time steps to predict forward
+        :param use_time_dim: bool: if True, use time dimension (axis=1 in predictors) to concatenate the result into a
+            continuous time series
+        :param kwargs: passed to Keras 'predict' method
         :return: ndarray: model prediction; first dim is time
         """
         time_steps = int(time_steps)
-        if time_steps < 0:
+        if time_steps < 1:
             raise ValueError("time_steps must be an int > 0")
+        if use_time_dim:
+            time_steps = int(np.ceil(1. * time_steps / self.time_dim))
         time_series = np.full((time_steps,) + predictors.shape, np.nan, dtype=np.float32)
         p = predictors.copy()
         for t in range(time_steps):
-            p = 1. * self.predict(p)
-            time_series[t, ...] = 1. * p
+            p = 1. * self.predict(p, **kwargs)
+            time_series[t, ...] = 1. * p  # step, sample, [time_step,] (features,)
+        if use_time_dim:
+            sample_dim = p.shape[0]
+            if self.is_recurrent:
+                feature_shape = p.shape[2:]
+            else:
+                feature_shape = p.shape[1:]
+                time_series = time_series.reshape((time_steps, sample_dim, self.time_dim, -1) + feature_shape[1:])
+            time_series = time_series.transpose((2, 0, 1) + tuple(range(3, 3 + len(feature_shape))))
+            time_series = time_series.reshape((time_steps * self.time_dim, sample_dim, -1) + feature_shape[1:])
         return time_series
 
     def _error(self, x, y):

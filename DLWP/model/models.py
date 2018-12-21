@@ -23,11 +23,14 @@ class DLWPNeuralNet(object):
     """
     DLWP model class which uses a Keras Sequential neural network built to user specification.
     """
-    def __init__(self, scaler_type='StandardScaler', scale_targets=True, apply_same_y_scaling=True,
-                 impute_missing=False, is_recurrent=False):
+    def __init__(self, is_convolutional=True, is_recurrent=False, time_dim=1,
+                 scaler_type='StandardScaler', scale_targets=True, apply_same_y_scaling=True, impute_missing=False):
         """
         Initialize an instance of DLWPNeuralNet.
 
+        :param is_convolutional: bool: if True, use spatial shapes for input and output of the model
+        :param is_recurrent: bool: if True, add a recurrent time axis to the model
+        :param time_dim: int: the number of time steps in the input and output of the model (int >= 1)
         :param scaler_type: str: class of scikit-learn scaler to apply to the input data. If None is provided,
             disables scaling.
         :param scale_targets: bool: if True, also scale the target data. Necessary for optimizer evaluation if there
@@ -35,8 +38,12 @@ class DLWPNeuralNet(object):
         :param apply_same_y_scaling: bool: if True, if the predictors and targets are the same shape (as for time
             series prediction), apply the same scaler to predictors and targets
         :param impute_missing: bool: if True, uses scikit-learn Imputer for missing values
-        :param is_recurrent: bool: if True, add a recurrent time axis to the model
         """
+        self.is_convolutional = is_convolutional
+        self.is_recurrent = is_recurrent
+        if int(time_dim) < 1:
+            raise ValueError("'time_dim' must be >= 1")
+        self.time_dim = time_dim
         self.scaler_type = scaler_type
         self.scale_targets = scale_targets
         self.apply_same_y_scaling = apply_same_y_scaling
@@ -45,7 +52,6 @@ class DLWPNeuralNet(object):
         self.impute = impute_missing
         self.imputer = None
         self.imputer_y = None
-        self.is_recurrent = is_recurrent
 
         self.model = None
         self.is_parallel = False
@@ -231,24 +237,40 @@ class DLWPNeuralNet(object):
         else:
             return predicted
 
-    def predict_timeseries(self, predictors, time_steps, **kwargs):
+    def predict_timeseries(self, predictors, time_steps, use_time_dim=True, **kwargs):
         """
         Make a timeseries prediction with the DLWPNeuralNet model. Also performs input feature scaling. Forward predict
-        time_steps number of times.
+        time_steps number of time steps, intelligently using the time dimension to run the model time_steps/time_dim
+        number of times and returning a time series of concatenated steps. The option use_time_dim disables knowledge
+        of a time dimension (which is assumed to be the second axis). If the model is not recurrent, then it is
+        assumed that the second dimension can be reshaped to (self.time_dim, num_channels).
 
         :param predictors: ndarray: predictor data
         :param time_steps: int: number of time steps to predict forward
+        :param use_time_dim: bool: if True, use time dimension (axis=1 in predictors) to concatenate the result into a
+            continuous time series
         :param kwargs: passed to Keras 'predict' method
         :return: ndarray: model prediction; first dim is time
         """
         time_steps = int(time_steps)
-        if time_steps < 0:
+        if time_steps < 1:
             raise ValueError("time_steps must be an int > 0")
+        if use_time_dim:
+            time_steps = int(np.ceil(1. * time_steps / self.time_dim))
         time_series = np.full((time_steps,) + predictors.shape, np.nan, dtype=np.float32)
         p = predictors.copy()
         for t in range(time_steps):
             p = 1. * self.predict(p, **kwargs)
-            time_series[t, ...] = 1. * p
+            time_series[t, ...] = 1. * p  # step, sample, [time_step,] (features,)
+        if use_time_dim:
+            sample_dim = p.shape[0]
+            if self.is_recurrent:
+                feature_shape = p.shape[2:]
+            else:
+                feature_shape = p.shape[1:]
+                time_series = time_series.reshape((time_steps, sample_dim, self.time_dim, -1) + feature_shape[1:])
+            time_series = time_series.transpose((2, 0, 1) + tuple(range(3, 3 + len(feature_shape))))
+            time_series = time_series.reshape((time_steps * self.time_dim, sample_dim, -1) + feature_shape[1:])
         return time_series
 
     def evaluate(self, predictors, targets, **kwargs):
@@ -273,7 +295,7 @@ class DataGenerator(Sequence):
     of the EnsembleSelector to do scaling and imputing of data.
     """
 
-    def __init__(self, model, ds, batch_size=32, shuffle=False, remove_nan=True, convolution=False):
+    def __init__(self, model, ds, batch_size=32, shuffle=False, remove_nan=True):
         """
         Initialize a DataGenerator.
 
@@ -282,7 +304,6 @@ class DataGenerator(Sequence):
         :param batch_size: int: number of samples (days) to take at a time from the dataset
         :param shuffle: bool: if True, randomly select batches
         :param remove_nan: bool: if True, remove any samples with NaNs
-        :param convolution: bool: if True, prepares samples for convolutional layers with 3 dimensions (channels, y, x)
         """
         self.model = model
         if not hasattr(ds, 'predictors') or not hasattr(ds, 'targets'):
@@ -291,18 +312,24 @@ class DataGenerator(Sequence):
         self._batch_size = batch_size
         self._shuffle = shuffle
         self._remove_nan = remove_nan
-        self._convolution = convolution
-        self._add_time_axis = self.model.is_recurrent
+        self._convolution = self.model.is_convolutional
+        self._keep_time_axis = self.model.is_recurrent
         self._impute_missing = self.model.impute
         self._indices = []
         self._n_sample = ds.dims['sample']
+        if 'time_step' in ds.dims:
+            self._has_time_step = True
+            self.time_dim = ds.dims['time_step']
+        else:
+            self._has_time_step = False
+            self.time_dim = None
 
         self.on_epoch_end()
 
     @property
-    def spatial_shape(self):
+    def shape(self):
         """
-        :return: the shape of the spatial component of ensemble predictors (variable, level, lat, lon)
+        :return: the original shape of ensemble predictors, ([time_step,] variable, level, lat, lon)
         """
         return self.ds.predictors.shape[1:]
 
@@ -311,14 +338,48 @@ class DataGenerator(Sequence):
         """
         :return: int: the number of features in the predictor array
         """
-        return int(np.prod(self.spatial_shape))
+        return int(np.prod(self.shape))
+
+    @property
+    def dense_shape(self):
+        """
+        :return: the shape of flattened features. If the model is recurrent, (time_step, features); otherwise,
+            (features,).
+        """
+        if self._keep_time_axis:
+            if self._has_time_step:
+                return (self.shape[0],) + (self.n_features // self.shape[0],)
+            else:
+                return (1,) + (self.n_features,)
+        else:
+            return (self.n_features,) + ()
 
     @property
     def convolution_shape(self):
         """
-        :return: the shape of the predictors expected by a convolutional layer. Note it is channels_first!
+        :return: the shape of the predictors expected by a Conv2D or ConvLSTM2D layer. If the model is recurrent,
+            (time_step, channels, y, x); if not, (channels, y, x).
         """
-        return (int(np.prod(self.ds.predictors.shape[1:-2])),) + self.ds.predictors.shape[-2:]
+        if self._keep_time_axis:
+            if self._has_time_step:
+                return (self.shape[0],) + (int(np.prod(self.shape[1:-2])),) + self.shape[-2:]
+            else:
+                return (1,) + (int(np.prod(self.shape[:-2])),) + self.shape[-2:]
+        else:
+            return (int(np.prod(self.shape[:-2])),) + self.ds.predictors.shape[-2:]
+
+    @property
+    def shape_2d(self):
+        """
+        :return: the shape of the predictors expected by a Conv2D layer, (channels, y, x)
+        """
+        if self._keep_time_axis:
+            self._keep_time_axis = False
+            s = self.convolution_shape
+            self._keep_time_axis = True
+            return s
+        else:
+            return self.convolution_shape
 
     def on_epoch_end(self):
         self._indices = np.arange(self._n_sample)
@@ -337,7 +398,7 @@ class DataGenerator(Sequence):
         ds.close()
         ds = None
 
-        # Remove samples with NaN
+        # Remove samples with NaN; scale and impute
         if self._remove_nan:
             p, t = delete_nan_samples(p, t)
         if self._impute_missing:
@@ -348,15 +409,13 @@ class DataGenerator(Sequence):
             if scale_and_impute:
                 p, t = self.model.scaler_transform(p, t)
 
-        # Format spatial shape for convolutions
+        # Format spatial shape for convolutions; also takes care of time axis
         if self._convolution:
             p = p.reshape((n_sample,) + self.convolution_shape)
             t = t.reshape((n_sample,) + self.convolution_shape)
-
-        # Add a time dimension axis for RNNs
-        if self._add_time_axis:
-            p = np.expand_dims(p, axis=1)
-            t = np.expand_dims(t, axis=1)
+        elif self._keep_time_axis:
+            p = p.reshape((n_sample,) + self.dense_shape)
+            t = t.reshape((n_sample,) + self.dense_shape)
 
         return p, t
 

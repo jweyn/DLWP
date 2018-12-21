@@ -24,12 +24,13 @@ from mpl_toolkits.basemap import Basemap
 
 # Open the data file
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
-predictor_file = '%s/cfs_1979-2010_hgt-tmp_250-500-1000_NH.nc' % root_directory
+predictor_file = '%s/cfs_1979-2010_hgt_500_NH_T2.nc' % root_directory
 
 # Names of model files, located in the root_directory
-models = ['dlwp_1979-2010_hgt-tmp_250-500-1000_NH_CONV_16_5_2_MP',
-          'dlwp_1979-2010_hgt-tmp_250-500-1000_NH_CLSTM_16_5_2_MP']
-model_labels = ['Conv', 'ConvLSTM']
+models = ['dlwp_1979-2010_hgt_500_NH_T2F_CLSTM_16_5_2',
+          'dlwp_1979-2010_hgt_500_NH_T2F_CLSTM_16_5_2_PBC',
+          'dlwp_1979-2010_hgt_500_NH_T2F_CLSTM_PBC_ROW_test']
+model_labels = ['LSTM', 'LSTM-PBC', 'LSTM-PBC-local']
 
 # Load the result of a barotropic model for comparison
 baro_model_file = '%s/barotropic_2007-2010.nc' % root_directory
@@ -37,25 +38,25 @@ baro_ds = xr.open_dataset(baro_model_file)
 baro_ds = baro_ds.isel(lat=(baro_ds.lat >= 0.0))  # Northern hemisphere only
 
 # Number of validation samples. For example, 2 years of 6-hourly data is 4 * (365 + 366) if one is a leap year.
-n_val = 4 * (365*3 + 366)
+n_val = 4 * (365 * 4 + 1)
 
 # Number of forward integration weather forecast time steps
 num_forecast_steps = 24
 
 # Calculate statistics for a specific variable index. If None, then averages all variables. Cannot be None if using a
 # barotropic model for comparison (specify the index of Z500).
-variable_index = 1
+variable_index = 0
 
 # Do specific plots
 plot_directory = './Plots'
 plot_example = None  # None to disable or the index of the sample
-plot_example_date = datetime(2009, 1, 1)
+plot_example_date = datetime(2007, 1, 1)
 plot_example_f_hour = 48  # Forecast hour index of the sample
 plot_history = True
 plot_zonal = True
 plot_mse = True
-mse_title = 'Forecast MSE 2007-10, $\hat{Z}$ 500 NH'
-mse_file_name = 'mse_Conv_ConvLSTM_250-500-1000.pdf'
+mse_title = 'Forecast MSE 2007-10, $\hat{Z}_{500}$ NH'
+mse_file_name = 'mse_CLSTM_T2.pdf'
 
 
 #%% Define some plotting functions
@@ -122,7 +123,7 @@ def zonal_mean_plot(obs_mean, obs_std, pred_mean, pred_std, model_name):
     plt.fill_betweenx(processor.data.lat, obs_mean - obs_std, obs_mean + obs_std,
                       facecolor='lightgray', zorder=-100)
     plt.plot(obs_mean, processor.data.lat, label='observed')
-    plt.plot(pred_mean, processor.data.lat, label='144-hour LSTM prediction')
+    plt.plot(pred_mean, processor.data.lat, label='%d-hour prediction' % 6 * num_forecast_steps)
     plt.legend(loc='best')
     plt.grid(True, color='lightgray', zorder=-100)
     plt.plot(pred_mean - pred_std, processor.data.lat, 'k:', linewidth=0.7)
@@ -144,41 +145,47 @@ train_set, val_set = train_test_split_ind(n_sample, n_val, method='last')
 
 # Lists to populate
 mse = []
-train_history = []
-val_history = []
 f_hour = np.arange(6., num_forecast_steps*6.+1., 6.)
 
 for m, model in enumerate(models):
     print('Loading model %s...' % model)
     dlwp, history = load_model('%s/%s' % (root_directory, model), True)
+
+    # Build in some tolerance for old models trained with former APIs missing the is_convolutional and is_recurrent
+    # attributes. This may not always work!
     if not hasattr(dlwp, 'is_recurrent'):
         dlwp.is_recurrent = False
         for layer in dlwp.model.layers:
             if 'LSTM' in layer.name.upper() or 'LST_M' in layer.name.upper():
                 dlwp.is_recurrent = True
-    recurrent_axis = slice(None) if dlwp.is_recurrent else None
-    if 'CONV' in dlwp.model.layers[0].name.upper():
-        is_convolution = True
-    else:
-        is_convolution = False
+    if not hasattr(dlwp, 'is_convolutional'):
+        dlwp.is_convolutional = False
+        for layer in dlwp.model.layers:
+            if 'CONV' in layer.name.upper():
+                dlwp.is_convolutional = True
+    if not hasattr(dlwp, 'time_dim'):
+        dlwp.time_dim = 1
+
+    # Recurrent time axis. This is probably unnecessary with the new predict_timeseries in 0.1.0
+    recurrent_axis = slice(-1) if dlwp.is_recurrent else None
+    time_dim = 1 * dlwp.time_dim
 
     # Create data generators
-    val_generator = DataGenerator(dlwp, processor.data.isel(sample=val_set), batch_size=216,
-                                  convolution=is_convolution)
+    val_generator = DataGenerator(dlwp, processor.data.isel(sample=val_set), batch_size=216)
     p_val, t_val = val_generator.generate([], scale_and_impute=False)
 
-    # Make a time series prediction
+    # Make a time series prediction and convert the predictors for comparison
     print('Predicting with model %s...' % model_labels[m])
     time_series = dlwp.predict_timeseries(p_val, num_forecast_steps)
+    p_series = verify.predictors_to_time_series(p_val, dlwp.time_dim, has_time_dim=dlwp.is_recurrent)
+    t_series = verify.predictors_to_time_series(t_val, dlwp.time_dim, has_time_dim=dlwp.is_recurrent,
+                                                use_first_step=True)
 
     # Calculate the MSE for each forecast hour relative to observations
     if variable_index is None:
         variable_index = slice(None)
-    mse.append(verify.forecast_error(time_series[:, :, recurrent_axis, variable_index],
-                                     t_val[:, recurrent_axis, variable_index]))
-
-    train_history.append(history['mean_absolute_error'])
-    val_history.append(history['val_mean_absolute_error'])
+    mse.append(verify.forecast_error(time_series[:, :, variable_index],
+                                     t_series[:, variable_index]))
 
     # Plot learning curves
     if plot_history:
@@ -186,19 +193,17 @@ for m, model in enumerate(models):
 
     # Plot an example
     if plot_example is not None:
-        example_plot(p_val[plot_example, recurrent_axis, variable_index].squeeze(),
-                     p_val[plot_example + plot_example_f_hour // 6 - 1, recurrent_axis, variable_index].squeeze(),
-                     time_series[plot_example_f_hour // 6 - 1, plot_example, recurrent_axis, variable_index].squeeze(),
+        example_plot(p_series[plot_example, variable_index].squeeze(),
+                     p_series[plot_example + plot_example_f_hour // 6 - 1, variable_index].squeeze(),
+                     time_series[plot_example_f_hour // 6 - 1, plot_example, variable_index].squeeze(),
                      model_labels[m])
 
     # Plot the zonal climatology of the last forecast hour
     if plot_zonal:
-        obs_zonal_mean = np.mean(p_val[num_forecast_steps:, recurrent_axis, variable_index], axis=(0, -1)).squeeze()
-        obs_zonal_std = np.mean(np.std(p_val[num_forecast_steps:, recurrent_axis, variable_index], axis=-1),
-                                axis=0).squeeze()
-        pred_zonal_mean = np.mean(time_series[-1, :-num_forecast_steps, recurrent_axis, variable_index],
-                                  axis=(0, -1)).squeeze()
-        pred_zonal_std = np.mean(np.std(time_series[-1, :-num_forecast_steps, recurrent_axis, variable_index], axis=-1),
+        obs_zonal_mean = np.mean(p_series[num_forecast_steps:, variable_index], axis=(0, -1)).squeeze()
+        obs_zonal_std = np.mean(np.std(p_series[num_forecast_steps:, variable_index], axis=-1), axis=0).squeeze()
+        pred_zonal_mean = np.mean(time_series[-1, :-num_forecast_steps, variable_index], axis=(0, -1)).squeeze()
+        pred_zonal_std = np.mean(np.std(time_series[-1, :-num_forecast_steps, variable_index], axis=-1),
                                  axis=0).squeeze()
         zonal_mean_plot(obs_zonal_mean, obs_zonal_std, pred_zonal_mean, pred_zonal_std, model_labels[m])
 
@@ -225,17 +230,16 @@ if baro_ds is not None:
     # The barotropic model is initialized at exactly all 6-hourly dates within the last 4 years, but the predictor
     # file samples must exclude the last (2010-12-31 18) forecast init date, because it doesn't have a target sample.
     # Hence we shift the init_dates to match.
-    mse.append(verify.forecast_error(baro_values[:, :-1], t_val[1:, recurrent_axis, variable_index].squeeze()))
+    mse.append(verify.forecast_error(baro_values[:, (time_dim-1):(-time_dim)],
+                                     t_series[:, variable_index].squeeze()))
     model_labels.append('Barotropic')
 
 print('Calculating persistence forecasts...')
-mse.append(verify.persistence_error(p_val[:, recurrent_axis, variable_index].squeeze(),
-                                    t_val[:, recurrent_axis, variable_index].squeeze(),
-                                    num_forecast_steps))
+mse.append(verify.persistence_error(p_series[:, variable_index], t_series[:, variable_index], num_forecast_steps))
 model_labels.append('Persistence')
 
 print('Calculating climatology forecasts...')
-mse.append(verify.climo_error(t_val.squeeze()[:, variable_index], num_forecast_steps))
+mse.append(verify.climo_error(t_series[:, variable_index], num_forecast_steps))
 model_labels.append('Climatology')
 
 

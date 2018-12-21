@@ -80,3 +80,27 @@ def climo_error(valid, n_fhour, method='mse', axis=None):
         elif method == 'mae':
             me.append(np.mean(np.abs(valid[:(n_f - f)] - np.mean(valid, axis=0)), axis=axis))
     return np.array(me)
+
+
+def predictors_to_time_series(predictors, time_steps, has_time_dim=True, use_first_step=False):
+    """
+    Reshapes predictors into a continuous time series that can be used for verification methods in this module and
+    matches the reshaped output of DLWP models' 'predict_timeseries' method. This is only necessary if the data are for
+    a model predicting multiple time steps. Also truncates the first (time_steps - 1) samples so that the time series
+    matches the effective forecast initialization time, or the last (time_steps -1) samples if use_first_step == True.
+
+    :param predictors: ndarray: array of predictor data
+    :param time_steps: int: number of time steps in the predictor data
+    :param has_time_dim: bool: if True, the time step dimension is axis=1 in the predictors, otherwise, axis 1 is
+        assumed to be time_steps * num_channels_or_features
+    :param use_first_step: bool: if True, keeps the first time step instead of the last (useful for validation
+    :return: ndarray: reshaped predictors
+    """
+    idx = 0 if use_first_step else -1
+    if has_time_dim:
+        return predictors[:, idx]
+    else:
+        sample_dim = predictors.shape[0]
+        feature_shape = predictors.shape[1:]
+        predictors = predictors.reshape((sample_dim, time_steps, -1) + feature_shape[1:])
+        return predictors[:, idx]
