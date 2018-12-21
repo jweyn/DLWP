@@ -269,7 +269,7 @@ class DLWPNeuralNet(object):
             else:
                 feature_shape = p.shape[1:]
                 time_series = time_series.reshape((time_steps, sample_dim, self.time_dim, -1) + feature_shape[1:])
-            time_series = time_series.transpose((2, 0, 1) + tuple(range(3, 3 + len(feature_shape))))
+            time_series = time_series.transpose((0, 2, 1) + tuple(range(3, 3 + len(feature_shape))))
             time_series = time_series.reshape((time_steps * self.time_dim, sample_dim, -1) + feature_shape[1:])
         return time_series
 
