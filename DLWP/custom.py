@@ -384,6 +384,8 @@ def row_conv2d(inputs, kernel, kernel_size, strides, output_shape, data_format=N
         output = K.concatenate(out, axis=2)
     else:
         output = K.concatenate(out, axis=1)
+    del x
+    del out
     return output
 
 
