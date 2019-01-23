@@ -93,7 +93,7 @@ def predictors_to_time_series(predictors, time_steps, has_time_dim=True, use_fir
     :param time_steps: int: number of time steps in the predictor data
     :param has_time_dim: bool: if True, the time step dimension is axis=1 in the predictors, otherwise, axis 1 is
         assumed to be time_steps * num_channels_or_features
-    :param use_first_step: bool: if True, keeps the first time step instead of the last (useful for validation
+    :param use_first_step: bool: if True, keeps the first time step instead of the last (useful for validation)
     :return: ndarray: reshaped predictors
     """
     idx = 0 if use_first_step else -1

@@ -14,6 +14,7 @@ from DLWP.util import load_model
 from DLWP.model.preprocessing import train_test_split_ind
 import keras.backend as K
 import numpy as np
+import pandas as pd
 import xarray as xr
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
@@ -27,18 +28,23 @@ root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
 predictor_file = '%s/cfs_1979-2010_hgt_500_NH_T2.nc' % root_directory
 
 # Names of model files, located in the root_directory
-models = ['dlwp_1979-2010_hgt_500_NH_T2F_CLSTM_16_5_2',
-          'dlwp_1979-2010_hgt_500_NH_T2F_CLSTM_16_5_2_PBC',
-          'dlwp_1979-2010_hgt_500_NH_T2F_CLSTM_PBC_ROW_test']
-model_labels = ['LSTM', 'LSTM-PBC', 'LSTM-PBC-local']
+models = ['dlwp_1979-2010_hgt_500_NH_T2F_CLSTM_16_5_2_PBC',
+          'dlwp_1979-2010_hgt_500_NH_T2F_CLSTM_CONV_16_5_2',
+          'dlwp_1979-2010_hgt_500_NH_T2F_CONVx5-upsample-dilate',
+          'dlwp_1979-2010_hgt_500_NH_T2F_CONVx5-lstm-upsample-dilate']
+model_labels = ['LSTM', 'CLSTM-CONV-2', 'CONVx5-upsample', 'CONVx5-upsample-lstm']
 
 # Load the result of a barotropic model for comparison
 baro_model_file = '%s/barotropic_2007-2010.nc' % root_directory
 baro_ds = xr.open_dataset(baro_model_file)
 baro_ds = baro_ds.isel(lat=(baro_ds.lat >= 0.0))  # Northern hemisphere only
 
-# Number of validation samples. For example, 2 years of 6-hourly data is 4 * (365 + 366) if one is a leap year.
-n_val = 4 * (365 * 4 + 1)
+# Validation set to use. Either an integer (number of validation samples, taken from the end), or a list of datetime
+# objects.
+# validation_set = 4 * (365 * 4 + 1)
+start_date = datetime(2007, 1, 1, 6)
+end_date = datetime(2010, 12, 31, 6)
+validation_set = list(pd.date_range(start_date, end_date, freq='6H'))
 
 # Number of forward integration weather forecast time steps
 num_forecast_steps = 24
@@ -49,14 +55,13 @@ variable_index = 0
 
 # Do specific plots
 plot_directory = './Plots'
-plot_example = None  # None to disable or the index of the sample
-plot_example_date = datetime(2007, 1, 1)
+plot_example = datetime(2003, 3, 1)  # None to disable or the date index of the sample
 plot_example_f_hour = 48  # Forecast hour index of the sample
 plot_history = False
 plot_zonal = False
 plot_mse = True
-mse_title = 'Forecast MSE 2007-10, $\hat{Z}_{500}$ NH'
-mse_file_name = 'mse_CLSTM_T2.pdf'
+mse_title = r'Forecast MSE 2003-6, $\hat{Z}_{500}$ NH'
+mse_file_name = 'mse_CLSTM_PBC_T2_4.pdf'
 
 
 #%% Define some plotting functions
@@ -77,7 +82,7 @@ def history_plot(train_hist, val_hist, model_name):
 
 def example_plot(base, verif, forecast, model_name, plot_diff=True):
     # Plot an example forecast
-    lons, lats = np.meshgrid(processor.data.lon, processor.data.lat)
+    lons, lats = np.meshgrid(val_generator.ds.lon, val_generator.ds.lat)
     fig = plt.figure()
     fig.set_size_inches(9, 9)
     m = Basemap(llcrnrlon=0., llcrnrlat=0., urcrnrlon=360., urcrnrlat=90.,
@@ -91,7 +96,7 @@ def example_plot(base, verif, forecast, model_name, plot_diff=True):
     m.drawcoastlines()
     m.drawparallels(np.arange(0., 91., 45.))
     m.drawmeridians(np.arange(0., 361., 90.))
-    ax.set_title('$t=0$ predictors (%s)' % plot_example_date)
+    ax.set_title('$t=0$ predictors (%s)' % plot_example)
     ax = plt.subplot(312)
     if plot_diff:
         m.contour(x, y, verif, np.arange(-2.5, 1.6, 0.5), cmap='jet')
@@ -100,7 +105,7 @@ def example_plot(base, verif, forecast, model_name, plot_diff=True):
     m.drawcoastlines()
     m.drawparallels(np.arange(0., 91., 45.))
     m.drawmeridians(np.arange(0., 361., 90.))
-    forecast_time = plot_example_date + timedelta(hours=plot_example_f_hour)
+    forecast_time = plot_example + timedelta(hours=plot_example_f_hour)
     ax.set_title('$t=%d$ verification (%s)' % (plot_example_f_hour, forecast_time))
     ax = plt.subplot(313)
     if plot_diff:
@@ -140,8 +145,14 @@ def zonal_mean_plot(obs_mean, obs_std, pred_mean, pred_std, model_name):
 # Use the predictor file as a wrapper
 processor = Preprocessor(None, predictor_file=predictor_file)
 processor.open()
-n_sample = processor.data.dims['sample']
-train_set, val_set = train_test_split_ind(n_sample, n_val, method='last')
+
+# Find the validation set
+if isinstance(validation_set, int):
+    n_sample = processor.data.dims['sample']
+    train_set, val_set = train_test_split_ind(n_sample, validation_set, method='last')
+    validation_data = processor.data.isel(sample=val_set)
+else:  # we must have a list of datetimes
+    validation_data = processor.data.sel(sample=validation_set)
 
 # Lists to populate
 mse = []
@@ -171,7 +182,10 @@ for m, model in enumerate(models):
     time_dim = 1 * dlwp.time_dim
 
     # Create data generators
-    val_generator = DataGenerator(dlwp, processor.data.isel(sample=val_set), batch_size=216)
+    if 'upsample' in model:
+        val_generator = DataGenerator(dlwp, validation_data.isel(lat=slice(1, None)), batch_size=216)
+    else:
+        val_generator = DataGenerator(dlwp, validation_data, batch_size=216)
     p_val, t_val = val_generator.generate([], scale_and_impute=False)
 
     # Make a time series prediction and convert the predictors for comparison
@@ -193,9 +207,10 @@ for m, model in enumerate(models):
 
     # Plot an example
     if plot_example is not None:
-        example_plot(p_series[plot_example, variable_index].squeeze(),
-                     p_series[plot_example + plot_example_f_hour // 6 - 1, variable_index].squeeze(),
-                     time_series[plot_example_f_hour // 6 - 1, plot_example, variable_index].squeeze(),
+        example_index = list(validation_data.sample.values).index(np.datetime64(plot_example))
+        example_plot(p_series[example_index, variable_index].squeeze(),
+                     p_series[example_index + plot_example_f_hour // 6 - 1, variable_index].squeeze(),
+                     time_series[plot_example_f_hour // 6 - 1, example_index, variable_index].squeeze(),
                      model_labels[m])
 
     # Plot the zonal climatology of the last forecast hour
@@ -218,20 +233,27 @@ for m, model in enumerate(models):
 if baro_ds is not None:
     print('Loading barotropic model data from %s...' % baro_model_file)
     print('I hope you selected only the variable corresponding to Z500!')
-    baro_values = baro_ds.variables['Z'].values
+    if isinstance(validation_set, int):
+        baro_ds = baro_ds.isel(time=slice(0, baro_ds.dims['time']-time_dim+1))
+    else:
+        baro_ds = baro_ds.sel(time=validation_set)
+    baro_forecast = baro_ds.isel(f_hour=(baro_ds.f_hour > 0))
+    baro_f = baro_forecast.variables['Z'].values
+    baro_verif = baro_ds.isel(f_hour=0)
+    baro_v = baro_forecast.variables['Z'].values.squeeze()
 
     # Normalize by the same std and mean as the predictor dataset
     var_idx = variable_index // processor.data.dims['level']
     lev_idx = variable_index % processor.data.dims['level']
     z500_mean = processor.data.isel(variable=var_idx, level=lev_idx).variables['mean'].values
     z500_std = processor.data.isel(variable=var_idx, level=lev_idx).variables['std'].values
-    baro_values = (baro_values - z500_mean) / z500_std
+    baro_f = (baro_f - z500_mean) / z500_std
 
     # The barotropic model is initialized at exactly all 6-hourly dates within the last 4 years, but the predictor
     # file samples must exclude the last (2010-12-31 18) forecast init date, because it doesn't have a target sample.
-    # Hence we shift the init_dates to match.
-    mse.append(verify.forecast_error(baro_values[:, (time_dim-1):(-time_dim)],
-                                     t_series[:, variable_index].squeeze()))
+    # The targets also include exactly the number of samples expected in 4 years, but start earlier than the barotropic
+    # model because of the missing samples at the end.
+    mse.append(verify.forecast_error(baro_f, baro_v))
     model_labels.append('Barotropic')
 
 print('Calculating persistence forecasts...')

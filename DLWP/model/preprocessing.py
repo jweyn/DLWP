@@ -13,6 +13,7 @@ import netCDF4 as nc
 import xarray as xr
 import os
 import random
+from datetime import datetime
 
 # netCDF fill value
 fill_value = np.array(nc.default_fillvals['f4']).astype(np.float32)
@@ -151,6 +152,18 @@ class Preprocessor(object):
             })
             nc_fid.variables['lon'][:] = ds['lon'].values
 
+            # Create initialization time reference variable
+            nc_var = nc_fid.createVariable('sample', np.float32, 'sample')
+            time_units = 'hours since 1970-01-01 00:00:00'
+
+            nc_var.setncatts({
+                'long_name': 'Sample start time',
+                'units': time_units
+            })
+            times = np.array([datetime.utcfromtimestamp(d/1e9)
+                              for d in ds['time'].values[time_step-1:n_sample+time_step-1].astype(datetime)])
+            nc_fid.variables['sample'][:] = nc.date2num(times, time_units)
+
             # Create predictors and targets variables
             predictors = nc_fid.createVariable('predictors', np.float32,
                                                ('sample', 'time_step', 'variable', 'level', 'lat', 'lon'))
@@ -222,7 +235,7 @@ class Preprocessor(object):
             result_ds = xr.open_dataset(self._predictor_file)
         else:
             result_ds = xr.Dataset({
-                'predictors': (['sample','time_step', 'variable', 'level', 'lat', 'lon'], predictors, {
+                'predictors': (['sample', 'time_step', 'variable', 'level', 'lat', 'lon'], predictors, {
                     'long_name': 'Predictors',
                     'units': 'N/A'
                 }),
@@ -239,6 +252,9 @@ class Preprocessor(object):
                     'units': 'N/A',
                 })
             }, coords={
+                'sample': ('sample', ds['time'].values[:n_sample], {
+                    'long_name': 'Sample start time'
+                }),
                 'variable': ('variable', variables),
                 'level': ('level', levels, {
                     'long_name': 'Pressure level',

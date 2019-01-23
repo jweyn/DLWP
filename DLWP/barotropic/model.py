@@ -66,7 +66,7 @@ class BarotropicModel(object):
         self.truncation = truncation
         self.engine = TransformsEngine(self.nlon, self.nlat, truncation)
         # Initialize constants for spectral damping:
-        m, n = self.engine.wavenumbers()
+        m, n = self.engine.wavenumbers
         el = (m + n) * (m + n + 1) / float(self.engine.radius) ** 2
         self.damping = damping_coefficient * (el / el[truncation]) ** damping_order
         # Initialize the grid and spectral model variables:
@@ -80,7 +80,7 @@ class BarotropicModel(object):
         # Set the initial state:
         self.set_state(z)  # @jweyn
         # Pre-compute the Coriolis parameter on the model grid:
-        lats, _ = self.engine.grid_latlon()
+        lats, _ = self.engine.grid_latlon
         self.f = 2 * 7.29e-5 * np.sin(np.deg2rad(lats))[:, np.newaxis]
         # Set time control parameters:
         self.start_time = start_time
@@ -187,13 +187,160 @@ class BarotropicModel(object):
                 yield self.t
 
     def get_z(self, vrt):  # @jweyn
-        n = self.engine.wavenumbers()[1] + 1.
+        n = self.engine.wavenumbers[1] + 1.
         factor = -1 * n * (n + 1) / (self.engine.radius ** 2.)
         z_spec = self.engine.grid_to_spec(vrt) / factor
         return self.engine.spec_to_grid(z_spec)
 
     def get_vrt(self, z):  # @jweyn
-        n = self.engine.wavenumbers()[1] + 1.
+        n = self.engine.wavenumbers[1] + 1.
         factor = -1 * n * (n + 1) / (self.engine.radius ** 2.)
         vrt_spec = factor * self.engine.grid_to_spec(z)
         return self.engine.spec_to_grid(vrt_spec)
+
+
+class BarotropicModelPsi(object):
+    """
+    Dynamical core for a spectral non-divergent barotropic vorticity
+    equation model. Uses the streamfunction formulation.
+    """
+
+    def __init__(self, z, truncation, dt, start_time,
+                 robert_coefficient=0.04, damping_coefficient=1e-4,
+                 damping_order=4):
+        """
+        Initialize a barotropic model.
+        Arguments:
+        * z : numpy.ndarray[nlat, nlon]
+            An initial field of geopotential height on a global regular grid.
+            In general nlon is double nlat.
+        * truncation : int
+            The spectral truncation (triangular). A suggested value is
+            nlon // 3.
+        * dt : float
+            The model time-step in seconds.
+        * start_time : datetime.datetime
+            A datetime object representing the start time of the model
+            run. This doesn't affect computation, it is only used for
+            metadata.
+        Optional arguments:
+        * robert_coefficient : default 0.04
+            The coefficient for the Robert time filter.
+        * damping coefficient : default 1e-4
+            The coefficient for the damping term.
+        * damping_order : default 4 (hyperdiffusion)
+            The order of the damping.
+        """
+        # Model grid size:
+        self.nlat, self.nlon = z.shape
+        # Filtering properties:
+        self.robert_coefficient = robert_coefficient
+        # Initialize the spectral transforms engine:
+        self.truncation = truncation
+        self.engine = TransformsEngine(self.nlon, self.nlat, truncation)
+        # Initialize constants for spectral damping:
+        m, n = self.engine.wavenumbers
+        el = (m + n) * (m + n + 1) / float(self.engine.radius) ** 2
+        self.damping = damping_coefficient * (el / el[truncation]) ** damping_order
+        # Initialize the grid variables:
+        self.z_grid = np.zeros([self.nlat, self.nlon], dtype=np.float64)
+        self.psi_grid = np.zeros([self.nlat, self.nlon], dtype=np.float64)
+        self.vrt_grid = np.zeros([self.nlat, self.nlon], dtype=np.float64)
+        # Initialize the spectral variables
+        nspec = (truncation + 1) * (truncation + 2) // 2
+        self.vrt_spec = np.zeros([nspec], dtype=np.complex128)
+        self.vrt_spec_prev = np.zeros([nspec], dtype=np.complex128)
+        # Pre-compute the Coriolis parameter on the model grid:
+        lats, _ = self.engine.grid_latlon
+        self.lats = lats
+        self.f = 2 * 7.29e-5
+        self.beta = 2 * 7.29e-5 * np.cos(np.deg2rad(lats))[:, np.newaxis] / self.engine.radius
+        self.g = 9.81
+        # Set the initial state:
+        self._set_state(z)
+        # Set time control parameters:
+        self.start_time = start_time
+        self.t = 0
+        self.dt = dt
+        self.first_step = True
+
+    @property
+    def valid_time(self):
+        """
+        A datetime.datetime object representing the current valid time
+        of the model state.
+        """
+        return self.start_time + timedelta(seconds=self.t)
+
+    def _set_state(self, z):
+        """
+        Set the model state from an initial z.
+        Argument:
+        * z : numpy.ndarray[nlat, nlon]
+            The model grid geopotential height.
+        """
+        self.z_grid[:] = z  # @jweyn
+        self.psi_grid[:] = self.g * z / self.f
+        self.vrt_spec[:] = self._psi_to_vrt(self.engine.grid_to_spec(self.psi_grid))
+        # Compute grid vorticity from spectral vorticity (to ensure it is
+        # consistent with the spectral form):
+        self.vrt_grid[:] = self.engine.spec_to_grid(self.vrt_spec)
+        # Set the spectral vorticity at the previous time to the current time,
+        # which makes sure damping works properly:
+        self.vrt_spec_prev[:] = self.vrt_spec
+
+    def step_forward(self, correct_sh=True):
+        """Step the model forward in time by one time-step."""
+        psi_spec = self.engine.grid_to_spec(self.psi_grid)
+        # dpsidx, _ = self.engine.grad_of_spec(psi_spec)
+        # beta_term = self.engine.grid_to_spec(self.beta * dpsidx)
+        dzetadt = -1. * (self._J(psi_spec, self.vrt_spec))
+        if correct_sh:
+            dzetadt = self.engine.spec_to_grid(dzetadt)
+            dzetadt[self.lats < 0] = -1. * dzetadt[self.lats < 0]
+            dzetadt = self.engine.grid_to_spec(dzetadt)
+
+        coeffs = 1. / (1. + self.damping * self.dt)
+        dzetadt = coeffs * (dzetadt - self.damping * self.vrt_spec_prev)
+
+        if self.first_step:
+            # Apply a forward-difference time integration scheme:
+            dt = self.dt
+            new_vrt_spec = self.vrt_spec + dt * dzetadt
+            self.vrt_spec[:] += (self.robert_coefficient *
+                                 (new_vrt_spec - self.vrt_spec))
+            # Only do the first step once:
+            self.first_step = False
+        else:
+            # Apply a leapfrog time integration scheme:
+            dt = 2 * self.dt
+            self.vrt_spec[:] += (self.robert_coefficient *
+                                 (self.vrt_spec_prev - 2. * self.vrt_spec))
+            new_vrt_spec = self.vrt_spec_prev + dt * dzetadt
+            self.vrt_spec[:] += self.robert_coefficient * new_vrt_spec
+
+        # Update in time
+        # Overwrite the t-1 time with the current time:
+        self.vrt_spec_prev[:] = self.vrt_spec
+        # Update the current time with the new values:
+        self.vrt_spec[:] = new_vrt_spec
+        self.vrt_grid[:] = self.engine.spec_to_grid(new_vrt_spec)
+        self.psi_grid[:] = self.engine.spec_to_grid(self._vrt_to_psi(new_vrt_spec))
+        self.z_grid[:] = self.f * self.psi_grid / self.g
+        # Increment the model time:
+        self.t += self.dt
+
+    def _vrt_to_psi(self, vrt):  # @jweyn
+        n = self.engine.wavenumbers[1] + 1.
+        factor = -1 * n * (n + 1) / (self.engine.radius ** 2.)
+        return vrt / factor
+
+    def _psi_to_vrt(self, z):  # @jweyn
+        n = self.engine.wavenumbers[1] + 1.
+        factor = -1 * n * (n + 1) / (self.engine.radius ** 2.)
+        return factor * z
+
+    def _J(self, psi, vrt):
+        dpsidx, dpsidy = self.engine.grad_of_spec(psi)
+        dvrtdx, dvrtdy = self.engine.grad_of_spec(vrt)
+        return self.engine.grid_to_spec(dpsidx * dvrtdy - dpsidy * dvrtdx)

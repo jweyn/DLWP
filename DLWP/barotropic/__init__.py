@@ -24,4 +24,4 @@ state to NetCDF files.
 
 from __future__ import (absolute_import, division, print_function)  #noqa
 
-from .model import BarotropicModel
+from .model import BarotropicModel, BarotropicModelPsi

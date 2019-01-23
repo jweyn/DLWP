@@ -96,12 +96,27 @@ class TransformsEngine(object):
             raise ValueError(msg)
         return scalar_spec
 
+    def grad_of_spec(self, scalar_spec):
+        """
+        Return zonal and meridional gradients of a spectral field.
+        """
+        try:
+            dsdx, dsdy = self.sh.getgrad(scalar_spec)
+        except ValueError:
+            nspec = (self.truncation + 1) * (self.truncation + 2) // 2
+            msg = ('scalar_spec must be a 1d or 2d array with shape '
+                   '(n) or (n, :) where n <= {}'.format(nspec))
+            raise ValueError(msg)
+        return dsdx, dsdy
+
+    @property
     def wavenumbers(self):
         """
         Wavenumbers corresponding to the spectral fields.
         """
         return getspecindx(self.truncation)
 
+    @property
     def grid_latlon(self):
         """
         Return the latitude and longitude coordinate vectors of the
