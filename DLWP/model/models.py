@@ -401,13 +401,10 @@ class DataGenerator(Sequence):
         # Remove samples with NaN; scale and impute
         if self._remove_nan:
             p, t = delete_nan_samples(p, t)
-        if self._impute_missing:
-            if scale_and_impute:
+        if scale_and_impute:
+            if self._impute_missing:
                 p, t = self.model.imputer_transform(p, t)
-                p, t = self.model.scaler_transform(p, t)
-        else:
-            if scale_and_impute:
-                p, t = self.model.scaler_transform(p, t)
+            p, t = self.model.scaler_transform(p, t)
 
         # Format spatial shape for convolutions; also takes care of time axis
         if self._convolution:
