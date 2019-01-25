@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2017-18 Jonathan Weyn <jweyn@uw.edu>
+# Copyright (c) 2019 Jonathan Weyn <jweyn@uw.edu>
 #
 # See the file LICENSE for your rights.
 #
@@ -15,6 +15,7 @@ from keras.layers.local import LocallyConnected2D
 from keras.utils import conv_utils
 from keras.engine.base_layer import InputSpec
 import tensorflow as tf
+import numpy as np
 
 try:
     from s2cnn import S2Convolution, SO3Convolution
@@ -387,6 +388,97 @@ def row_conv2d(inputs, kernel, kernel_size, strides, output_shape, data_format=N
     del x
     del out
     return output
+
+
+class LatitudeWeightedLoss(object):
+    """
+    Class to create a weighted latitude-dependent loss function for a Keras model.
+    """
+    def __init__(self, loss_function, lats, data_format='channels_last', weighting='cosine'):
+        """
+        Initialize a weighted loss.
+
+        :param loss_function: method: Keras loss function to apply after the weighting
+        :param lats: ndarray: 1-dimensional array of latitude coordinates
+        :param data_format: Keras data_format ('channels_first' or 'channels_last')
+        :param weighting: str: type of weighting to apply. Options are:
+            cosine: weight by the cosine of the latitude (default)
+            midlatitude: weight by the cosine of the latitude but also apply a 25% reduction to the equator and boost
+                to the mid-latitudes
+        """
+        self.loss_function = loss_function
+        self.lats = lats
+        self.data_format = K.normalize_data_format(data_format)
+        if weighting not in ['cosine', 'midlatitude']:
+            raise ValueError("'weighting' must be one of 'cosine' or 'midlatitude'")
+        self.weighting = weighting
+        lat_tensor = K.zeros(lats.shape)
+        print(lats)
+        lat_tensor.assign(K.cast_to_floatx(lats[:]))
+        self.weights = K.cos(lat_tensor * np.pi / 180.)
+        if self.weighting == 'midlatitude':
+            self.weights = self.weights - 0.25 * K.sin(lat_tensor * 2 * np.pi / 180.)
+        self.is_init = False
+
+        self.__name__ = 'latitude_weighted_loss'
+
+    def init_weights(self, shape):
+        if shape[-1] is None:
+            return
+        # Repeat the weights tensor to match the last dimensions of the batch
+        if self.data_format == 'channels_last':
+            self.weights = K.expand_dims(self.weights, axis=1)
+            self.weights = K.repeat_elements(self.weights, shape[-1], axis=1)
+        else:
+            self.weights = K.expand_dims(self.weights, axis=1)
+            self.weights = K.repeat_elements(self.weights, shape[-2], axis=1)
+            self.weights = K.expand_dims(self.weights, axis=2)
+            self.weights = K.repeat_elements(self.weights, shape[-1], axis=2)
+        self.is_init = True
+
+    def __call__(self, y_true, y_pred):
+        # Check that the weights array has been initialized to fit the dimensions
+        if not self.is_init:
+            self.init_weights(K.int_shape(y_true))
+        if self.is_init:
+            loss = self.loss_function(y_true * self.weights, y_pred * self.weights)
+        else:
+            loss = self.loss_function(y_true, y_pred)
+        return loss
+
+
+def latitude_weighted_loss(loss_function, lats, output_shape, axis=-2, weighting='cosine'):
+    """
+    Create a loss function that weights inputs by a function of latitude before calculating the loss.
+
+    :param loss_function: method: Keras loss function to apply after the weighting
+    :param lats: ndarray: 1-dimensional array of latitude coordinates
+    :param output_shape: tuple: shape of expected model output
+    :param axis: int: latitude axis in model output shape
+    :param weighting: str: type of weighting to apply. Options are:
+            cosine: weight by the cosine of the latitude (default)
+            midlatitude: weight by the cosine of the latitude but also apply a 25% reduction to the equator and boost
+                to the mid-latitudes
+    :return: callable loss function
+    """
+    if weighting not in ['cosine', 'midlatitude']:
+        raise ValueError("'weighting' must be one of 'cosine' or 'midlatitude'")
+    lat_tensor = K.zeros(lats.shape)
+    lat_tensor.assign(K.cast_to_floatx(lats[:]))
+
+    weights = K.cos(lat_tensor * np.pi / 180.)
+    if weighting == 'midlatitude':
+        weights = weights - 0.25 * K.sin(lat_tensor * 2 * np.pi / 180.)
+
+    weight_shape = output_shape[axis:]
+    for d in weight_shape[1:]:
+        weights = K.expand_dims(weights, axis=-1)
+        weights = K.repeat_elements(weights, d, axis=-1)
+
+    def loss(y_true, y_pred):
+        return loss_function(y_true * weights, y_pred * weights)
+
+    return loss
 
 
 # ==================================================================================================================== #

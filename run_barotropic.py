@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2017-18 Jonathan Weyn <jweyn@uw.edu>
+# Copyright (c) 2019 Jonathan Weyn <jweyn@uw.edu>
 #
 # See the file LICENSE for your rights.
 #
@@ -16,14 +16,14 @@ import numpy as np
 import xarray as xr
 
 
-start_date = datetime(2003, 1, 1)
-end_date = datetime(2006, 12, 31)
+start_date = datetime(2007, 1, 1)
+end_date = datetime(2010, 12, 31)
 dates = list(pd.date_range(start_date, end_date, freq='D').to_pydatetime())
 level = 500
 baro_dt = 0.5
 baro_step_hours = 6
 baro_run_hours = 144
-output_file = '/home/disk/wave2/jweyn/Data/DLWP/barotropic_test.nc'
+output_file = '/home/disk/wave2/jweyn/Data/DLWP/barotropic_2007-2010.nc'
 
 cfs = CFSReanalysis(root_directory='/home/disk/wave2/jweyn/Data/CFSR', file_id='dlwp_')
 cfs.set_dates(dates)

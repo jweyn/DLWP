@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2017-18 Jonathan Weyn <jweyn@uw.edu>
+# Copyright (c) 2019 Jonathan Weyn <jweyn@uw.edu>
 #
 # See the file LICENSE for your rights.
 #
@@ -36,18 +36,22 @@ model_labels = ['LSTM', 'CLSTM-CONV-2', 'CONVx5-upsample', 'CONVx5-upsample-lstm
 
 # Load the result of a barotropic model for comparison
 baro_model_file = '%s/barotropic_2007-2010.nc' % root_directory
-baro_ds = xr.open_dataset(baro_model_file)
+baro_ds = xr.open_dataset(baro_model_file, cache=False)
 baro_ds = baro_ds.isel(lat=(baro_ds.lat >= 0.0))  # Northern hemisphere only
 
-# Validation set to use. Either an integer (number of validation samples, taken from the end), or a list of datetime
-# objects.
+# Validation set to use. Either an integer (number of validation samples, taken from the end), or an iterable of
+# pandas datetime objects.
 # validation_set = 4 * (365 * 4 + 1)
 start_date = datetime(2007, 1, 1, 6)
 end_date = datetime(2010, 12, 31, 6)
 validation_set = list(pd.date_range(start_date, end_date, freq='6H'))
+# validation_set = [d for d in validation_set if d.month in [1, 2, 12]]
 
 # Number of forward integration weather forecast time steps
 num_forecast_steps = 24
+
+# Latitude bounds for MSE calculation
+lat_range = [20., 70.]
 
 # Calculate statistics for a specific variable index. If None, then averages all variables. Cannot be None if using a
 # barotropic model for comparison (specify the index of Z500).
@@ -55,13 +59,13 @@ variable_index = 0
 
 # Do specific plots
 plot_directory = './Plots'
-plot_example = datetime(2003, 3, 1)  # None to disable or the date index of the sample
+plot_example = None # None to disable or the date index of the sample
 plot_example_f_hour = 48  # Forecast hour index of the sample
 plot_history = False
 plot_zonal = False
 plot_mse = True
-mse_title = r'Forecast MSE 2003-6, $\hat{Z}_{500}$ NH'
-mse_file_name = 'mse_CLSTM_PBC_T2_4.pdf'
+mse_title = r'Forecast error 2007-10, $\hat{Z}_{500}$, 20-70 $^{\circ}$N'
+mse_file_name = 'mse_hgt_500_T2_20-70.pdf'
 
 
 #%% Define some plotting functions
@@ -82,7 +86,7 @@ def history_plot(train_hist, val_hist, model_name):
 
 def example_plot(base, verif, forecast, model_name, plot_diff=True):
     # Plot an example forecast
-    lons, lats = np.meshgrid(val_generator.ds.lon, val_generator.ds.lat)
+    lons, lats = np.meshgrid(base.lon, base.lat)
     fig = plt.figure()
     fig.set_size_inches(9, 9)
     m = Basemap(llcrnrlon=0., llcrnrlat=0., urcrnrlon=360., urcrnrlat=90.,
@@ -125,14 +129,14 @@ def example_plot(base, verif, forecast, model_name, plot_diff=True):
 def zonal_mean_plot(obs_mean, obs_std, pred_mean, pred_std, model_name):
     fig = plt.figure()
     fig.set_size_inches(4, 6)
-    plt.fill_betweenx(processor.data.lat, obs_mean - obs_std, obs_mean + obs_std,
+    plt.fill_betweenx(obs_mean.lat, obs_mean - obs_std, obs_mean + obs_std,
                       facecolor='lightgray', zorder=-100)
-    plt.plot(obs_mean, processor.data.lat, label='observed')
-    plt.plot(pred_mean, processor.data.lat, label='%d-hour prediction' % 6 * num_forecast_steps)
+    plt.plot(obs_mean, obs_mean.lat, label='observed')
+    plt.plot(pred_mean, pred_mean.lat, label='%d-hour prediction' % (6 * num_forecast_steps))
     plt.legend(loc='best')
     plt.grid(True, color='lightgray', zorder=-100)
-    plt.plot(pred_mean - pred_std, processor.data.lat, 'k:', linewidth=0.7)
-    plt.plot(pred_mean + pred_std, processor.data.lat, 'k:', linewidth=0.7)
+    plt.plot(pred_mean - pred_std, pred_mean.lat, 'k:', linewidth=0.7)
+    plt.plot(pred_mean + pred_std, pred_mean.lat, 'k:', linewidth=0.7)
     plt.xlabel('zonal mean height')
     plt.ylabel('latitude')
     plt.ylim([0., 90.])
@@ -153,6 +157,14 @@ if isinstance(validation_set, int):
     validation_data = processor.data.isel(sample=val_set)
 else:  # we must have a list of datetimes
     validation_data = processor.data.sel(sample=validation_set)
+
+# Shortcuts for latitude range
+lat_min = np.min(lat_range)
+lat_max = np.max(lat_range)
+
+# Shortcuts for variable / level indexing
+var_idx = variable_index // processor.data.dims['level']
+lev_idx = variable_index % processor.data.dims['level']
 
 # Lists to populate
 mse = []
@@ -191,15 +203,24 @@ for m, model in enumerate(models):
     # Make a time series prediction and convert the predictors for comparison
     print('Predicting with model %s...' % model_labels[m])
     time_series = dlwp.predict_timeseries(p_val, num_forecast_steps)
-    p_series = verify.predictors_to_time_series(p_val, dlwp.time_dim, has_time_dim=dlwp.is_recurrent)
+    time_series = verify.add_metadata_to_forecast(time_series, f_hour, val_generator.ds)
+    p_series = verify.predictors_to_time_series(p_val, dlwp.time_dim, has_time_dim=dlwp.is_recurrent,
+                                                meta_ds=val_generator.ds)
     t_series = verify.predictors_to_time_series(t_val, dlwp.time_dim, has_time_dim=dlwp.is_recurrent,
-                                                use_first_step=True)
+                                                use_first_step=True, meta_ds=val_generator.ds)
 
-    # Calculate the MSE for each forecast hour relative to observations
+    # Slice the array as we want it
     if variable_index is None:
         variable_index = slice(None)
-    mse.append(verify.forecast_error(time_series[:, :, variable_index],
-                                     t_series[:, variable_index]))
+    time_series = time_series.isel(variable=variable_index,
+                                   lat=((time_series.lat >= lat_min) & (time_series.lat <= lat_max)))
+    p_series = p_series.isel(variable=variable_index,
+                             lat=((p_series.lat >= lat_min) & (p_series.lat <= lat_max)))
+    t_series = t_series.isel(variable=variable_index,
+                             lat=((t_series.lat >= lat_min) & (t_series.lat <= lat_max)))
+
+    # Calculate the MSE for each forecast hour relative to observations
+    mse.append(verify.forecast_error(time_series.values, t_series.values))
 
     # Plot learning curves
     if plot_history:
@@ -207,19 +228,17 @@ for m, model in enumerate(models):
 
     # Plot an example
     if plot_example is not None:
-        example_index = list(validation_data.sample.values).index(np.datetime64(plot_example))
-        example_plot(p_series[example_index, variable_index].squeeze(),
-                     p_series[example_index + plot_example_f_hour // 6 - 1, variable_index].squeeze(),
-                     time_series[plot_example_f_hour // 6 - 1, example_index, variable_index].squeeze(),
-                     model_labels[m])
+        plot_dt = np.datetime64(plot_example)
+        example_plot(p_series.sel(time=plot_dt),
+                     p_series.sel(time=plot_dt + np.timedelta64(timedelta(hours=plot_example_f_hour))),
+                     time_series.sel(f_hour=plot_example_f_hour, time=plot_dt), model_labels[m])
 
     # Plot the zonal climatology of the last forecast hour
     if plot_zonal:
-        obs_zonal_mean = np.mean(p_series[num_forecast_steps:, variable_index], axis=(0, -1)).squeeze()
-        obs_zonal_std = np.mean(np.std(p_series[num_forecast_steps:, variable_index], axis=-1), axis=0).squeeze()
-        pred_zonal_mean = np.mean(time_series[-1, :-num_forecast_steps, variable_index], axis=(0, -1)).squeeze()
-        pred_zonal_std = np.mean(np.std(time_series[-1, :-num_forecast_steps, variable_index], axis=-1),
-                                 axis=0).squeeze()
+        obs_zonal_mean = p_series[num_forecast_steps:].mean(axis=(0, -1))
+        obs_zonal_std = p_series[num_forecast_steps:].std(axis=-1).mean(axis=0)
+        pred_zonal_mean = time_series[-1, :-num_forecast_steps].mean(axis=(0, -1))
+        pred_zonal_std = time_series[-1, :-num_forecast_steps].std(axis=-1).mean(axis=0)
         zonal_mean_plot(obs_zonal_mean, obs_zonal_std, pred_zonal_mean, pred_zonal_std, model_labels[m])
 
     # Clear the model
@@ -233,35 +252,34 @@ for m, model in enumerate(models):
 if baro_ds is not None:
     print('Loading barotropic model data from %s...' % baro_model_file)
     print('I hope you selected only the variable corresponding to Z500!')
+    baro_ds = baro_ds.isel(lat=((baro_ds.lat >= lat_min) & (baro_ds.lat <= lat_max)))
     if isinstance(validation_set, int):
         baro_ds = baro_ds.isel(time=slice(0, baro_ds.dims['time']-time_dim+1))
     else:
         baro_ds = baro_ds.sel(time=validation_set)
+
+    # Verify against the included forecast hour 0
     baro_forecast = baro_ds.isel(f_hour=(baro_ds.f_hour > 0))
     baro_f = baro_forecast.variables['Z'].values
     baro_verif = baro_ds.isel(f_hour=0)
-    baro_v = baro_forecast.variables['Z'].values.squeeze()
+    baro_v = baro_verif.variables['Z'].values.squeeze()
 
     # Normalize by the same std and mean as the predictor dataset
-    var_idx = variable_index // processor.data.dims['level']
-    lev_idx = variable_index % processor.data.dims['level']
     z500_mean = processor.data.isel(variable=var_idx, level=lev_idx).variables['mean'].values
     z500_std = processor.data.isel(variable=var_idx, level=lev_idx).variables['std'].values
     baro_f = (baro_f - z500_mean) / z500_std
+    baro_v = (baro_v - z500_mean) / z500_std
 
-    # The barotropic model is initialized at exactly all 6-hourly dates within the last 4 years, but the predictor
-    # file samples must exclude the last (2010-12-31 18) forecast init date, because it doesn't have a target sample.
-    # The targets also include exactly the number of samples expected in 4 years, but start earlier than the barotropic
-    # model because of the missing samples at the end.
     mse.append(verify.forecast_error(baro_f, baro_v))
     model_labels.append('Barotropic')
 
 print('Calculating persistence forecasts...')
-mse.append(verify.persistence_error(p_series[:, variable_index], t_series[:, variable_index], num_forecast_steps))
+mse.append(verify.persistence_error(p_series.values, t_series.values, num_forecast_steps))
 model_labels.append('Persistence')
 
 print('Calculating climatology forecasts...')
-mse.append(verify.climo_error(t_series[:, variable_index], num_forecast_steps))
+mse.append(verify.monthly_climo_error(processor.data['predictors'].isel(time_step=-1, variable=var_idx, level=lev_idx),
+                                      validation_set, n_fhour=num_forecast_steps))
 model_labels.append('Climatology')
 
 
@@ -273,7 +291,7 @@ for m, model in enumerate(model_labels):
     if model != 'Barotropic':
         plt.plot(f_hour, mse[m], label=model, linewidth=2.)
     else:
-        plt.plot(baro_ds.f_hour, mse[m], label=model, linewidth=2.)
+        plt.plot(baro_forecast.f_hour, mse[m], label=model, linewidth=2.)
 plt.legend(loc='best')
 plt.grid(True, color='lightgray', zorder=-100)
 plt.xlabel('forecast hour')

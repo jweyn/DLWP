@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2017-18 Jonathan Weyn <jweyn@uw.edu>
+# Copyright (c) 2019 Jonathan Weyn <jweyn@uw.edu>
 #
 # See the file LICENSE for your rights.
 #
@@ -9,6 +9,7 @@ Methods for validating DLWP forecasts.
 """
 
 import numpy as np
+import xarray as xr
 
 
 def forecast_error(forecast, valid, method='mse', axis=None):
@@ -82,7 +83,35 @@ def climo_error(valid, n_fhour, method='mse', axis=None):
     return np.array(me)
 
 
-def predictors_to_time_series(predictors, time_steps, has_time_dim=True, use_first_step=False):
+def monthly_climo_error(da, val_set, n_fhour=None, method='mse', return_da=False):
+    """
+    Calculates a month-aware climatology error for a validation set from a DataArray of the atmospheric state.
+
+    :param da: xarray DataArray: contains a 'time' or 'sample' dimension
+    :param val_set: list: list of times for which to calculate an error
+    :param n_fhour: int or None: if int, multiplies the resulting error into a list of length n_fhour
+    :param method: 'mse' for mean squared error or 'mae' for mean absolute error
+    :param return_da: bool: if True, also returns a DataArray of the error from climatology
+    :return: (int or list[, DataArray])
+    """
+    if method not in ['mse', 'mae']:
+        raise ValueError("'method' must be 'mse' or 'mae'")
+    time_dim = 'sample' if 'sample' in da.dims else 'time'
+    monthly_climo = da.groupby('%s.month' % time_dim).mean(time_dim)
+    anomaly = da.sel(**{time_dim: val_set}).groupby('%s.month' % time_dim) - monthly_climo
+    if method == 'mse':
+        me = float((anomaly ** 2.).mean(xr.ALL_DIMS).values)
+    elif method == 'mae':
+        me = float(anomaly.abs().mean(xr.ALL_DIMS).values)
+    if n_fhour is not None:
+        me = [me] * n_fhour
+    if return_da:
+        return me, anomaly
+    else:
+        return me
+
+
+def predictors_to_time_series(predictors, time_steps, has_time_dim=True, use_first_step=False, meta_ds=None):
     """
     Reshapes predictors into a continuous time series that can be used for verification methods in this module and
     matches the reshaped output of DLWP models' 'predict_timeseries' method. This is only necessary if the data are for
@@ -94,13 +123,32 @@ def predictors_to_time_series(predictors, time_steps, has_time_dim=True, use_fir
     :param has_time_dim: bool: if True, the time step dimension is axis=1 in the predictors, otherwise, axis 1 is
         assumed to be time_steps * num_channels_or_features
     :param use_first_step: bool: if True, keeps the first time step instead of the last (useful for validation)
-    :return: ndarray: reshaped predictors
+    :param meta_ds: xarray Dataset: if not None, add metadata to the output using the coordinates in this Dataset
+    :return: ndarray or xarray DataArray: reshaped predictors
     """
     idx = 0 if use_first_step else -1
     if has_time_dim:
-        return predictors[:, idx]
+        result = predictors[:, idx]
     else:
         sample_dim = predictors.shape[0]
         feature_shape = predictors.shape[1:]
         predictors = predictors.reshape((sample_dim, time_steps, -1) + feature_shape[1:])
-        return predictors[:, idx]
+        result = predictors[:, idx]
+    if meta_ds is not None:
+        result = xr.DataArray(result, coords=[meta_ds.sample, meta_ds.variable, meta_ds.lat, meta_ds.lon],
+                              dims=['time', 'variable', 'lat', 'lon'])
+
+    return result
+
+
+def add_metadata_to_forecast(forecast, f_hour, meta_ds):
+    """
+    Add metadata to a forecast based on the initialization times and coordinates in meta_ds.
+
+    :param forecast: ndarray: (forecast_hour, time, variable, lat, lon)
+    :param f_hour: iterable: forecast hour coordinate values
+    :param meta_ds: xarray Dataset: contains metadata for time, variable, lat, and lon
+    :return: xarray.DataArray: array with metadata
+    """
+    return xr.DataArray(forecast, coords=[f_hour, meta_ds.sample, meta_ds.variable, meta_ds.lat, meta_ds.lon],
+                        dims=['f_hour', 'time', 'variable', 'lat', 'lon'])
