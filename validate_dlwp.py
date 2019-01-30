@@ -11,8 +11,10 @@ Simple routines for evaluating the performance of a DLWP model.
 from DLWP.model import DataGenerator, Preprocessor
 from DLWP.model import verify
 from DLWP.util import load_model
+from DLWP.custom import latitude_weighted_loss
 from DLWP.model.preprocessing import train_test_split_ind
 import keras.backend as K
+from keras.losses import mean_squared_error
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -25,27 +27,38 @@ from mpl_toolkits.basemap import Basemap
 
 # Open the data file
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
-predictor_file = '%s/cfs_1979-2010_hgt_500_NH_T2.nc' % root_directory
+predictor_file = '%s/cfs_1979-2010_hgt_500-1000_NH_T2.nc' % root_directory
 
 # Names of model files, located in the root_directory
-models = ['dlwp_1979-2010_hgt_500_NH_T2F_CLSTM_16_5_2_PBC',
-          'dlwp_1979-2010_hgt_500_NH_T2F_CLSTM_CONV_16_5_2',
-          'dlwp_1979-2010_hgt_500_NH_T2F_CONVx5-upsample-dilate',
-          'dlwp_1979-2010_hgt_500_NH_T2F_CONVx5-lstm-upsample-dilate']
-model_labels = ['LSTM', 'CLSTM-CONV-2', 'CONVx5-upsample', 'CONVx5-upsample-lstm']
+models = [
+    'dlwp_1979-2010_hgt_500-1000_NH_T2F_CONVx5-upsample-dilate',
+    'dlwp_1979-2010_hgt_500_NH_T2F_CONVx5-upsample-dilate'
+]
+model_labels = [
+    'CNN 2-level',
+    'CNN 1-level'
+]
 
-# Load the result of a barotropic model for comparison
-baro_model_file = '%s/barotropic_2007-2010.nc' % root_directory
-baro_ds = xr.open_dataset(baro_model_file, cache=False)
-baro_ds = baro_ds.isel(lat=(baro_ds.lat >= 0.0))  # Northern hemisphere only
+# Optional list of selections to make from the predictor dataset for each model. This is useful if, for example,
+# you want to examine models that have different numbers of vertical levels but one predictor dataset contains
+# the data that all models need.
+predictor_sel = [
+    None,
+    {'level': [500]}
+]
 
 # Validation set to use. Either an integer (number of validation samples, taken from the end), or an iterable of
 # pandas datetime objects.
 # validation_set = 4 * (365 * 4 + 1)
-start_date = datetime(2007, 1, 1, 6)
-end_date = datetime(2010, 12, 31, 6)
+start_date = datetime(2003, 1, 1, 6)
+end_date = datetime(2006, 12, 31, 6)
 validation_set = list(pd.date_range(start_date, end_date, freq='6H'))
 # validation_set = [d for d in validation_set if d.month in [1, 2, 12]]
+
+# Load the result of a barotropic model for comparison
+baro_model_file = '%s/barotropic_%s-%s.nc' % (root_directory, start_date.year, end_date.year)
+baro_ds = xr.open_dataset(baro_model_file, cache=False)
+baro_ds = baro_ds.isel(lat=(baro_ds.lat >= 0.0))  # Northern hemisphere only
 
 # Number of forward integration weather forecast time steps
 num_forecast_steps = 24
@@ -53,19 +66,20 @@ num_forecast_steps = 24
 # Latitude bounds for MSE calculation
 lat_range = [20., 70.]
 
-# Calculate statistics for a specific variable index. If None, then averages all variables. Cannot be None if using a
-# barotropic model for comparison (specify the index of Z500).
-variable_index = 0
+# Calculate statistics for a specific variable and level. If None, then averages all variables. Cannot be None if using
+# a barotropic model for comparison (specify Z500).
+variable = 'HGT'
+level = 500
 
 # Do specific plots
 plot_directory = './Plots'
-plot_example = None # None to disable or the date index of the sample
+plot_example = None  # None to disable or the date index of the sample
 plot_example_f_hour = 48  # Forecast hour index of the sample
 plot_history = False
 plot_zonal = False
 plot_mse = True
-mse_title = r'Forecast error 2007-10, $\hat{Z}_{500}$, 20-70 $^{\circ}$N'
-mse_file_name = 'mse_hgt_500_T2_20-70.pdf'
+mse_title = r'Forecast error: 2003-06; $\hat{Z}_{500}$; 20-70$^{\circ}$N'
+mse_file_name = 'mse_hgt_500-1000_T2_20-70.pdf'
 
 
 #%% Define some plotting functions
@@ -162,17 +176,31 @@ else:  # we must have a list of datetimes
 lat_min = np.min(lat_range)
 lat_max = np.max(lat_range)
 
-# Shortcuts for variable / level indexing
-var_idx = variable_index // processor.data.dims['level']
-lev_idx = variable_index % processor.data.dims['level']
+# Format the predictor indexer and variable index in reshaped array
+predictor_sel = predictor_sel or [None] * len(models)
+variable = variable or processor.data.variables['variable'][:]
+level = level or processor.data.variables['level'][:]
 
 # Lists to populate
 mse = []
-f_hour = np.arange(6., num_forecast_steps*6.+1., 6.)
+f_hour = np.arange(6., num_forecast_steps * 6. + 1., 6.)
 
 for m, model in enumerate(models):
     print('Loading model %s...' % model)
-    dlwp, history = load_model('%s/%s' % (root_directory, model), True)
+
+    # Some tolerance for using a weighted loss function. Unreliable but doesn't hurt.
+    if 'weight' in model.lower():
+        lats = validation_data.lat.values
+        output_shape = (validation_data.dims['lat'], validation_data.dims['lon'])
+        if 'upsample' in model.lower():
+            lats = lats[1:]
+        customs = {'loss': latitude_weighted_loss(mean_squared_error, lats, output_shape, axis=-2,
+                                                  weighting='midlatitude')}
+    else:
+        customs = None
+
+    # Load the model
+    dlwp, history = load_model('%s/%s' % (root_directory, model), True, custom_objects=customs)
 
     # Build in some tolerance for old models trained with former APIs missing the is_convolutional and is_recurrent
     # attributes. This may not always work!
@@ -188,36 +216,36 @@ for m, model in enumerate(models):
                 dlwp.is_convolutional = True
     if not hasattr(dlwp, 'time_dim'):
         dlwp.time_dim = 1
-
-    # Recurrent time axis. This is probably unnecessary with the new predict_timeseries in 0.1.0
-    recurrent_axis = slice(-1) if dlwp.is_recurrent else None
     time_dim = 1 * dlwp.time_dim
 
     # Create data generators
-    if 'upsample' in model:
-        val_generator = DataGenerator(dlwp, validation_data.isel(lat=slice(1, None)), batch_size=216)
+    if predictor_sel[m] is not None:
+        val_ds = validation_data.sel(**predictor_sel[m])
     else:
-        val_generator = DataGenerator(dlwp, validation_data, batch_size=216)
+        val_ds = validation_data.copy()
+    if 'upsample' in model.lower():
+        val_ds = val_ds.isel(lat=(val_ds.lat < 90.0))
+    val_generator = DataGenerator(dlwp, val_ds, batch_size=216)
     p_val, t_val = val_generator.generate([], scale_and_impute=False)
 
     # Make a time series prediction and convert the predictors for comparison
     print('Predicting with model %s...' % model_labels[m])
     time_series = dlwp.predict_timeseries(p_val, num_forecast_steps)
-    time_series = verify.add_metadata_to_forecast(time_series, f_hour, val_generator.ds)
-    p_series = verify.predictors_to_time_series(p_val, dlwp.time_dim, has_time_dim=dlwp.is_recurrent,
-                                                meta_ds=val_generator.ds)
-    t_series = verify.predictors_to_time_series(t_val, dlwp.time_dim, has_time_dim=dlwp.is_recurrent,
-                                                use_first_step=True, meta_ds=val_generator.ds)
+    time_series = verify.add_metadata_to_forecast(time_series, f_hour, val_ds)
+    p_series = verify.predictors_to_time_series(p_val, time_dim, has_time_dim=dlwp.is_recurrent, meta_ds=val_ds)
+    t_series = verify.predictors_to_time_series(t_val, time_dim, has_time_dim=dlwp.is_recurrent,
+                                                use_first_step=True, meta_ds=val_ds)
 
-    # Slice the array as we want it
-    if variable_index is None:
-        variable_index = slice(None)
-    time_series = time_series.isel(variable=variable_index,
-                                   lat=((time_series.lat >= lat_min) & (time_series.lat <= lat_max)))
-    p_series = p_series.isel(variable=variable_index,
-                             lat=((p_series.lat >= lat_min) & (p_series.lat <= lat_max)))
-    t_series = t_series.isel(variable=variable_index,
-                             lat=((t_series.lat >= lat_min) & (t_series.lat <= lat_max)))
+    # Slice the arrays as we want
+    time_series = time_series.sel(variable=(slice(None) if variable is None else variable),
+                                  level=(slice(None) if level is None else level),
+                                  lat=((time_series.lat >= lat_min) & (time_series.lat <= lat_max)))
+    p_series = p_series.sel(variable=(slice(None) if variable is None else variable),
+                            level=(slice(None) if level is None else level),
+                            lat=((p_series.lat >= lat_min) & (p_series.lat <= lat_max)))
+    t_series = t_series.sel(variable=(slice(None) if variable is None else variable),
+                            level=(slice(None) if level is None else level),
+                            lat=((t_series.lat >= lat_min) & (t_series.lat <= lat_max)))
 
     # Calculate the MSE for each forecast hour relative to observations
     mse.append(verify.forecast_error(time_series.values, t_series.values))
@@ -251,7 +279,8 @@ for m, model in enumerate(models):
 
 if baro_ds is not None:
     print('Loading barotropic model data from %s...' % baro_model_file)
-    print('I hope you selected only the variable corresponding to Z500!')
+    if variable is None or level is None:
+        raise ValueError("specific 'variable' and 'level' for Z500 must be specified to use barotropic model")
     baro_ds = baro_ds.isel(lat=((baro_ds.lat >= lat_min) & (baro_ds.lat <= lat_max)))
     if isinstance(validation_set, int):
         baro_ds = baro_ds.isel(time=slice(0, baro_ds.dims['time']-time_dim+1))
@@ -265,8 +294,8 @@ if baro_ds is not None:
     baro_v = baro_verif.variables['Z'].values.squeeze()
 
     # Normalize by the same std and mean as the predictor dataset
-    z500_mean = processor.data.isel(variable=var_idx, level=lev_idx).variables['mean'].values
-    z500_std = processor.data.isel(variable=var_idx, level=lev_idx).variables['std'].values
+    z500_mean = processor.data.sel(variable=variable, level=level).variables['mean'].values
+    z500_std = processor.data.sel(variable=variable, level=level).variables['std'].values
     baro_f = (baro_f - z500_mean) / z500_std
     baro_v = (baro_v - z500_mean) / z500_std
 
@@ -278,8 +307,9 @@ mse.append(verify.persistence_error(p_series.values, t_series.values, num_foreca
 model_labels.append('Persistence')
 
 print('Calculating climatology forecasts...')
-mse.append(verify.monthly_climo_error(processor.data['predictors'].isel(time_step=-1, variable=var_idx, level=lev_idx),
-                                      validation_set, n_fhour=num_forecast_steps))
+mse.append(verify.monthly_climo_error(processor.data['predictors'].isel(time_step=-1).sel(
+    variable=(slice(None) if variable is None else variable),
+    level=(slice(None) if level is None else level)), validation_set, n_fhour=num_forecast_steps))
 model_labels.append('Climatology')
 
 

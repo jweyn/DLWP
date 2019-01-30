@@ -124,18 +124,21 @@ def save_model(model, file_name, history=None):
             pickle.dump(history.history, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def load_model(file_name, history=False):
+def load_model(file_name, history=False, custom_objects=None):
     """
     Loads a model saved to disk with the `save_model()` method.
 
     :param file_name: str: base name of save files
     :param history: bool: if True, loads the history file along with the model
+    :param custom_objects: dict: any custom functions or classes to be included when Keras loads the model. There is
+        no need to add objects in DLWP.custom as those are added automatically.
     :return: model [, dict]: loaded object [, dictionary of training history]
     """
     with open('%s.pkl' % file_name, 'rb') as f:
         model = pickle.load(f)
-    custom_layers = get_classes('DLWP.custom')
-    model.model = keras.models.load_model('%s.keras' % file_name, custom_objects=custom_layers, compile=True)
+    custom_objects = custom_objects or {}
+    custom_objects.update(get_classes('DLWP.custom'))
+    model.model = keras.models.load_model('%s.keras' % file_name, custom_objects=custom_objects, compile=True)
     if history:
         with open('%s.history' % file_name, 'rb') as f:
             h = pickle.load(f)

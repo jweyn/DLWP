@@ -152,6 +152,12 @@ class Preprocessor(object):
             })
             nc_fid.variables['lon'][:] = ds['lon'].values
 
+            nc_var = nc_fid.createVariable('variable', str, 'variable')
+            nc_var.setncatts({
+                'long_name': 'Variable name',
+            })
+            nc_fid.variables['variable'][:] = np.array(variables, dtype='object')
+
             # Create initialization time reference variable
             nc_var = nc_fid.createVariable('sample', np.float32, 'sample')
             time_units = 'hours since 1970-01-01 00:00:00'

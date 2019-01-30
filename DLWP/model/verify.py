@@ -135,8 +135,15 @@ def predictors_to_time_series(predictors, time_steps, has_time_dim=True, use_fir
         predictors = predictors.reshape((sample_dim, time_steps, -1) + feature_shape[1:])
         result = predictors[:, idx]
     if meta_ds is not None:
-        result = xr.DataArray(result, coords=[meta_ds.sample, meta_ds.variable, meta_ds.lat, meta_ds.lon],
-                              dims=['time', 'variable', 'lat', 'lon'])
+        if 'level' in meta_ds.dims:
+            result = result.reshape((meta_ds.dims['sample'], meta_ds.dims['variable'], meta_ds.dims['level'],
+                                     meta_ds.dims['lat'], meta_ds.dims['lon']))
+            result = xr.DataArray(result,
+                                  coords=[meta_ds.sample, meta_ds.variable, meta_ds.level, meta_ds.lat, meta_ds.lon],
+                                  dims=['time', 'variable', 'level', 'lat', 'lon'])
+        else:
+            result = xr.DataArray(result, coords=[meta_ds.sample, meta_ds.variable, meta_ds.lat, meta_ds.lon],
+                                  dims=['time', 'var_lev', 'lat', 'lon'])
 
     return result
 
@@ -150,5 +157,16 @@ def add_metadata_to_forecast(forecast, f_hour, meta_ds):
     :param meta_ds: xarray Dataset: contains metadata for time, variable, lat, and lon
     :return: xarray.DataArray: array with metadata
     """
-    return xr.DataArray(forecast, coords=[f_hour, meta_ds.sample, meta_ds.variable, meta_ds.lat, meta_ds.lon],
-                        dims=['f_hour', 'time', 'variable', 'lat', 'lon'])
+    nf = len(f_hour)
+    if nf != forecast.shape[0]:
+        raise ValueError("'f_hour' coordinate must have same size as the first axis of 'forecast'")
+    if 'level' in meta_ds.dims:
+        forecast = forecast.reshape((nf, meta_ds.dims['sample'], meta_ds.dims['variable'], meta_ds.dims['level'],
+                                     meta_ds.dims['lat'], meta_ds.dims['lon']))
+        forecast = xr.DataArray(forecast,
+                                coords=[f_hour, meta_ds.sample, meta_ds.variable, meta_ds.level, meta_ds.lat, meta_ds.lon],
+                                dims=['f_hour', 'time', 'variable', 'level', 'lat', 'lon'])
+    else:
+        forecast = xr.DataArray(forecast, coords=[f_hour, meta_ds.sample, meta_ds.variable, meta_ds.lat, meta_ds.lon],
+                                dims=['f_hour', 'time', 'var_lev', 'lat', 'lon'])
+    return forecast
