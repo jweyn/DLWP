@@ -27,14 +27,16 @@ from mpl_toolkits.basemap import Basemap
 
 # Open the data file
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
-predictor_file = '%s/cfs_1979-2010_hgt_500-1000_NH_T2.nc' % root_directory
+predictor_file = '%s/cfs_1979-2010_hgt_250-500_NH_T2.nc' % root_directory
 
 # Names of model files, located in the root_directory
 models = [
-    'dlwp_1979-2010_hgt_500-1000_NH_T2F_CONVx5-upsample-dilate',
+    'dlwp_1979-2010_hgt_250-500_NH_T2F_CONVx5-x2-upsample-dilate',
+    'dlwp_1979-2010_hgt_250-500_NH_T2F_CONVx5-upsample-dilate',
     'dlwp_1979-2010_hgt_500_NH_T2F_CONVx5-upsample-dilate'
 ]
 model_labels = [
+    'CNN 2-level 2x',
     'CNN 2-level',
     'CNN 1-level'
 ]
@@ -44,20 +46,32 @@ model_labels = [
 # the data that all models need.
 predictor_sel = [
     None,
+    None,
     {'level': [500]}
 ]
 
 # Validation set to use. Either an integer (number of validation samples, taken from the end), or an iterable of
 # pandas datetime objects.
 # validation_set = 4 * (365 * 4 + 1)
-start_date = datetime(2003, 1, 1, 6)
+start_date = datetime(2003, 1, 1, 0)
 end_date = datetime(2006, 12, 31, 6)
-validation_set = list(pd.date_range(start_date, end_date, freq='6H'))
+validation_set = np.array(pd.date_range(start_date, end_date, freq='6H'), dtype='datetime64')
 # validation_set = [d for d in validation_set if d.month in [1, 2, 12]]
 
-# Load the result of a barotropic model for comparison
+# Generate a verification array in memory. May use significant memory but is required if the validation set is not a
+# continuous selection from predictor dataset.
+generate_verification = True
+
+# Load a CFS Reforecast model for comparison
+cfs_model_file = '%s/cfs_reforecast_5day_z500_2003-2010_interp.nc' % root_directory
+cfs_ds = xr.open_dataset(cfs_model_file)
+cfs_ds = cfs_ds.isel(lat=(cfs_ds.lat >= 0.0))  # Northern hemisphere only
+# Actually let's change the validation dates to those in the CFS dataset
+validation_set = [d for d in cfs_ds.time.values if d in validation_set]
+
+# Load a barotropic model for comparison
 baro_model_file = '%s/barotropic_%s-%s.nc' % (root_directory, start_date.year, end_date.year)
-baro_ds = xr.open_dataset(baro_model_file, cache=False)
+baro_ds = xr.open_dataset(baro_model_file)
 baro_ds = baro_ds.isel(lat=(baro_ds.lat >= 0.0))  # Northern hemisphere only
 
 # Number of forward integration weather forecast time steps
@@ -79,7 +93,7 @@ plot_history = False
 plot_zonal = False
 plot_mse = True
 mse_title = r'Forecast error: 2003-06; $\hat{Z}_{500}$; 20-70$^{\circ}$N'
-mse_file_name = 'mse_hgt_500-1000_T2_20-70.pdf'
+mse_file_name = 'mse_hgt_250-500_T2_20-70_CFS.pdf'
 
 
 #%% Define some plotting functions
@@ -185,6 +199,22 @@ level = level or processor.data.variables['level'][:]
 mse = []
 f_hour = np.arange(6., num_forecast_steps * 6. + 1., 6.)
 
+# Generate verification
+if generate_verification:
+    print('Generating validation set...')
+    verification = xr.DataArray(
+        np.zeros((num_forecast_steps, validation_data.dims['sample'], validation_data.dims['variable'],
+                  validation_data.dims['level'], validation_data.dims['lat'], validation_data.dims['lon'])),
+        coords=[f_hour, validation_data.sample, validation_data.variable, validation_data.level,
+                validation_data.lat, validation_data.lon],
+        dims=['f_hour', 'sample', 'variable', 'level', 'lat', 'lon']
+    )
+    valid_da = processor.data.targets.isel(time_step=0)
+    for d, date in enumerate(validation_set):
+        verification[:, d] = valid_da.sel(
+            sample=pd.date_range(date, date + np.timedelta64(timedelta(hours=6 * (num_forecast_steps - 1))),
+                                 freq='6H')).values
+
 for m, model in enumerate(models):
     print('Loading model %s...' % model)
 
@@ -233,8 +263,18 @@ for m, model in enumerate(models):
     time_series = dlwp.predict_timeseries(p_val, num_forecast_steps)
     time_series = verify.add_metadata_to_forecast(time_series, f_hour, val_ds)
     p_series = verify.predictors_to_time_series(p_val, time_dim, has_time_dim=dlwp.is_recurrent, meta_ds=val_ds)
-    t_series = verify.predictors_to_time_series(t_val, time_dim, has_time_dim=dlwp.is_recurrent,
-                                                use_first_step=True, meta_ds=val_ds)
+
+    # Generate the validation, either for discrete times or continuous
+    if generate_verification:
+        if predictor_sel[m] is not None:
+            verif = verification.sel(**predictor_sel[m])
+        else:
+            verif = verification.copy()
+        if 'upsample' in model.lower():
+            verif = verif.isel(lat=(verif.lat < 90.0))
+    else:
+        verif = verify.predictors_to_time_series(t_val, time_dim, has_time_dim=dlwp.is_recurrent,
+                                                    use_first_step=True, meta_ds=val_ds)
 
     # Slice the arrays as we want
     time_series = time_series.sel(variable=(slice(None) if variable is None else variable),
@@ -243,12 +283,12 @@ for m, model in enumerate(models):
     p_series = p_series.sel(variable=(slice(None) if variable is None else variable),
                             level=(slice(None) if level is None else level),
                             lat=((p_series.lat >= lat_min) & (p_series.lat <= lat_max)))
-    t_series = t_series.sel(variable=(slice(None) if variable is None else variable),
-                            level=(slice(None) if level is None else level),
-                            lat=((t_series.lat >= lat_min) & (t_series.lat <= lat_max)))
+    verif = verif.sel(variable=(slice(None) if variable is None else variable),
+                      level=(slice(None) if level is None else level),
+                      lat=((verif.lat >= lat_min) & (verif.lat <= lat_max)))
 
     # Calculate the MSE for each forecast hour relative to observations
-    mse.append(verify.forecast_error(time_series.values, t_series.values))
+    mse.append(verify.forecast_error(time_series.values, verif.values))
 
     # Plot learning curves
     if plot_history:
@@ -275,7 +315,7 @@ for m, model in enumerate(models):
     K.clear_session()
 
 
-#%% Add Barotropic model, persistence, and climatology
+#%% Add Barotropic model
 
 if baro_ds is not None:
     print('Loading barotropic model data from %s...' % baro_model_file)
@@ -290,26 +330,76 @@ if baro_ds is not None:
     # Verify against the included forecast hour 0
     baro_forecast = baro_ds.isel(f_hour=(baro_ds.f_hour > 0))
     baro_f = baro_forecast.variables['Z'].values
-    baro_verif = baro_ds.isel(f_hour=0)
-    baro_v = baro_verif.variables['Z'].values.squeeze()
 
     # Normalize by the same std and mean as the predictor dataset
     z500_mean = processor.data.sel(variable=variable, level=level).variables['mean'].values
     z500_std = processor.data.sel(variable=variable, level=level).variables['std'].values
     baro_f = (baro_f - z500_mean) / z500_std
-    baro_v = (baro_v - z500_mean) / z500_std
 
-    mse.append(verify.forecast_error(baro_f, baro_v))
+    if generate_verification:
+        try:
+            verif = verif.sel(variable=variable, level=level)
+        except ValueError:
+            pass
+        mse.append(verify.forecast_error(baro_f, verif.values))
+    else:
+        baro_verif = baro_ds.isel(f_hour=0)
+        baro_v = baro_verif.variables['Z'].values.squeeze()
+        baro_v = (baro_v - z500_mean) / z500_std
+        mse.append(verify.forecast_error(baro_f, baro_v))
     model_labels.append('Barotropic')
 
+
+#%% Add the CFS model
+
+if cfs_ds is not None:
+    print('Loading CFS model data from %s...' % cfs_model_file)
+    if variable is None or level is None:
+        raise ValueError("specific 'variable' and 'level' for Z500 must be specified to use CFS model model")
+    cfs_ds = cfs_ds.isel(lat=((cfs_ds.lat >= lat_min) & (cfs_ds.lat <= lat_max)))
+    if isinstance(validation_set, int):
+        raise ValueError("I can only compare to a CFS Reforecast with datetime validation set")
+    else:
+        cfs_ds = cfs_ds.sel(time=validation_set)
+
+    # Verify against the included forecast hour 0 # 6 temporarily
+    cfs_forecast = cfs_ds.isel(f_hour=(cfs_ds.f_hour > 0))
+    cfs_f = cfs_forecast.variables['Z'].values
+
+    # Normalize by the same std and mean as the predictor dataset
+    z500_mean = processor.data.sel(variable=variable, level=level).variables['mean'].values
+    z500_std = processor.data.sel(variable=variable, level=level).variables['std'].values
+    cfs_f = (cfs_f - z500_mean) / z500_std
+
+    if generate_verification:
+        try:
+            verif = verif.sel(variable=variable, level=level)
+        except ValueError:
+            pass
+        mse.append(verify.forecast_error(cfs_f, verif.values))
+    else:
+        cfs_verif = cfs_ds.isel(f_hour=6)
+        cfs_v = cfs_verif.variables['Z'].values.squeeze()
+        cfs_v = (cfs_v - z500_mean) / z500_std
+        mse.append(verify.forecast_error(cfs_f, cfs_v))
+    model_labels.append('CFS')
+
+
+#%% Add persistence and climatology
+
 print('Calculating persistence forecasts...')
-mse.append(verify.persistence_error(p_series.values, t_series.values, num_forecast_steps))
+if generate_verification:
+    mse.append(verify.forecast_error(np.repeat(p_series.values[None, ...], num_forecast_steps, axis=0), verif.values))
+else:
+    mse.append(verify.persistence_error(p_series.values, verif.values, num_forecast_steps))
 model_labels.append('Persistence')
 
 print('Calculating climatology forecasts...')
 mse.append(verify.monthly_climo_error(processor.data['predictors'].isel(time_step=-1).sel(
     variable=(slice(None) if variable is None else variable),
-    level=(slice(None) if level is None else level)), validation_set, n_fhour=num_forecast_steps))
+    level=(slice(None) if level is None else level),
+    lat=((processor.data.lat >= lat_min) & (processor.data.lat <= lat_max))),
+    validation_set, n_fhour=num_forecast_steps))
 model_labels.append('Climatology')
 
 

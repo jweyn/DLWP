@@ -25,15 +25,28 @@ from mpl_toolkits.basemap import Basemap
 
 # Open the data file
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
-predictor_file = '%s/cfs_1979-2010_hgt_500_NH_T2.nc' % root_directory
+predictor_file = '%s/cfs_1979-2010_hgt_250-500-1000_NH_T2.nc' % root_directory
 
 # Names of model files, located in the root_directory
-models = ['dlwp_1979-2010_hgt_500_NH_T2F_CLSTM_16_5_2_PBC',
-          'dlwp_1979-2010_hgt_500_NH_T2F_CLSTM_CONV_16_5_2',
-          'dlwp_1979-2010_hgt_500_NH_T2F_CONVx5-upsample-dilate',
-          'dlwp_1979-2010_hgt_500_NH_T2F_CONVx5-lstm-upsample-dilate']
-model_labels = ['LSTM', 'CLSTM-CONV-2', 'CONVx5-upsample', 'CONVx5-upsample-lstm']
+models = [
+    'dlwp_1979-2010_hgt_250-500_NH_T2F_CONVx5-upsample-dilate',
+    'dlwp_1979-2010_hgt_500-1000_NH_T2F_CONVx5-upsample-dilate',
+    'dlwp_1979-2010_hgt_500_NH_T2F_CONVx5-upsample-dilate'
+]
+model_labels = [
+    'CNN 250-500',
+    'CNN 500-1000',
+    'CNN 500'
+]
 
+# Optional list of selections to make from the predictor dataset for each model. This is useful if, for example,
+# you want to examine models that have different numbers of vertical levels but one predictor dataset contains
+# the data that all models need.
+predictor_sel = [
+    {'level': [250, 500]},
+    {'level': [500, 1000]},
+    {'level': [500]}
+]
 
 # Load the result of a barotropic model for comparison
 baro_model_file = '%s/barotropic_2003-2006.nc' % root_directory
@@ -46,8 +59,8 @@ plot_forecast_hour = 24
 model_dt = 6
 
 # Variable and level index to plot; scaling option
-variable_index = 0
-level_index = 0
+variable = 'HGT'
+level = 500
 scale_variables = True
 
 # Latitude / Longitude limits
@@ -65,7 +78,7 @@ error_maxmin = 240
 
 # Output file and other small details
 plot_directory = './Plots'
-plot_file_name = 'MAP_24'
+plot_file_name = 'MAP_2-level_24'
 plot_file_type = 'pdf'
 
 
@@ -139,10 +152,8 @@ lon_min = np.min(longitude_range)
 lon_max = np.max(longitude_range)
 
 # Get the mean and std of the data
-var_idx = variable_index // dataset.dims['level']
-lev_idx = variable_index % dataset.dims['level']
-z500_mean = dataset.isel(variable=var_idx, level=lev_idx).variables['mean'].values
-z500_std = dataset.isel(variable=var_idx, level=lev_idx).variables['std'].values
+z500_mean = dataset.sel(variable=variable, level=level).variables['mean'].values
+z500_std = dataset.sel(variable=variable, level=level).variables['std'].values
 
 
 #%% Make forecasts
@@ -157,10 +168,13 @@ for mod, model in enumerate(models):
     dlwp, history = load_model('%s/%s' % (root_directory, model), True)
 
     # Create data generators. If the model has upsampling, remove a latitude index if the number of latitudes is odd
-    if 'upsample' in model.lower():
-        val_generator = DataGenerator(dlwp, dataset.isel(lat=slice(dataset.dims['lat'] % 2, None)), batch_size=216)
+    if predictor_sel[mod] is not None:
+        val_ds = dataset.sel(**predictor_sel[mod])
     else:
-        val_generator = DataGenerator(dlwp, dataset, batch_size=216)
+        val_ds = dataset.copy()
+    if 'upsample' in model.lower():
+        val_ds = val_ds.isel(lat=(val_ds.lat < 90.0))
+    val_generator = DataGenerator(dlwp, val_ds, batch_size=216)
     p_val, t_val = val_generator.generate([], scale_and_impute=False)
 
     # Make a time series prediction and convert the predictors for comparison
@@ -168,14 +182,13 @@ for mod, model in enumerate(models):
     time_series = dlwp.predict_timeseries(p_val, num_forecast_steps)
     if scale_variables:
         time_series = time_series * z500_std + z500_mean
-    time_series = verify.add_metadata_to_forecast(time_series, f_hour, val_generator.ds)
+    time_series = verify.add_metadata_to_forecast(time_series, f_hour, val_ds)
 
     # Slice the array as we want it
-    if variable_index is None:
-        variable_index = slice(None)
-    time_series = time_series.isel(variable=variable_index,
-                                   lat=((time_series.lat >= lat_min) & (time_series.lat <= lat_max)),
-                                   lon=((time_series.lon >= lon_min) & (time_series.lon <= lon_max)))
+    time_series = time_series.sel(variable=(slice(None) if variable is None else variable),
+                                  level=(slice(None) if level is None else level),
+                                  lat=((time_series.lat >= lat_min) & (time_series.lat <= lat_max)),
+                                  lon=((time_series.lon >= lon_min) & (time_series.lon <= lon_max)))
 
     model_forecasts.append(1. * time_series)
 
@@ -209,12 +222,12 @@ for date in plot_dates:
 
     plot_fields = [f.sel(f_hour=plot_forecast_hour, time=date64) for f in model_forecasts]
 
-    init_data = dataset['predictors'].sel(sample=date64).isel(
-        variable=variable_index, level=level_index, time_step=-1,
+    init_data = dataset['predictors'].isel(time_step=-1).sel(
+        sample=date64, variable=variable, level=level,
         lat=((dataset.lat >= lat_min) & (dataset.lat <= lat_max)),
         lon=((dataset.lon >= lon_min) & (dataset.lon <= lon_max)))
-    verif_data = dataset['predictors'].sel(sample=verif_date64).isel(
-        variable=variable_index, level=level_index, time_step=-1,
+    verif_data = dataset['predictors'].isel(time_step=-1).sel(
+        sample=verif_date64, variable=variable, level=level,
         lat=((dataset.lat >= lat_min) & (dataset.lat <= lat_max)),
         lon=((dataset.lon >= lon_min) & (dataset.lon <= lon_max)))
 

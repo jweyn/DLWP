@@ -26,14 +26,23 @@ def forecast_error(forecast, valid, method='mse', axis=None):
     if method not in ['mse', 'mae']:
         raise ValueError("'method' must be 'mse' or 'mae'")
     n_f = forecast.shape[0]
-    n_val = valid.shape[0]
-    me = []
-    for f in range(n_f):
+    if len(forecast.shape) == len(valid.shape):
+        # valid must include a forecast hour dimension
+        if axis is None:
+            axis = tuple(range(1, len(valid.shape)))
         if method == 'mse':
-            me.append(np.mean((valid[f:] - forecast[f, :(n_val - f)]) ** 2., axis=axis))
+            return np.mean((valid - forecast) ** 2., axis=axis)
         elif method == 'mae':
-            me.append(np.mean(np.abs(valid[f:] - forecast[f, :(n_val - f)]), axis=axis))
-    return np.array(me)
+            return np.mean(np.abs(valid - forecast), axis=axis)
+    else:
+        n_val = valid.shape[0]
+        me = []
+        for f in range(n_f):
+            if method == 'mse':
+                me.append(np.mean((valid[f:] - forecast[f, :(n_val - f)]) ** 2., axis=axis))
+            elif method == 'mae':
+                me.append(np.mean(np.abs(valid[f:] - forecast[f, :(n_val - f)]), axis=axis))
+        return np.array(me)
 
 
 def persistence_error(predictors, valid, n_fhour, method='mse', axis=None):

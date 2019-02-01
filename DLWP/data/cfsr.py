@@ -57,7 +57,7 @@ fill_value = np.array(nc.default_fillvals['f4']).astype(np.float32)
 
 
 # ==================================================================================================================== #
-# GEFSRArray object class
+# CFSReanalysis object class
 # ==================================================================================================================== #
 
 
@@ -489,7 +489,7 @@ class CFSReanalysis(object):
 
     def field(self, variable, time, level):
         """
-        Shortcut method to return a 2-D numpy array from the data loaded in an GR2Array.
+        Shortcut method to return a 2-D numpy array from the data loaded in an CFSReanalysis.
 
         :param variable: str: variable to retrieve
         :param time: datetime: requested time
@@ -516,9 +516,9 @@ class CFSReanalysis(object):
 
     def generate_basemap(self, llcrnrlat=None, llcrnrlon=None, urcrnrlat=None, urcrnrlon=None):
         """
-        Generates a Basemap object for graphical plot of GR2 data on a 2-D plane. Bounding box parameters
+        Generates a Basemap object for graphical plot of CFSR data on a 2-D plane. Bounding box parameters
         are either given, or if None, read from the extremes of the loaded lat/lon data. Other projection parameters
-        are set to the default GR2 configuration.
+        are set to the default CFSR configuration.
 
         :param llcrnrlat: float: lower left corner latitude
         :param llcrnrlon: float: lower left corner longitude
@@ -551,7 +551,7 @@ class CFSReanalysis(object):
 
     def plot(self, variable, time, level, **plot_basemap_kwargs):
         """
-        Wrapper to plot a specified field from an GR2Array object.
+        Wrapper to plot a specified field from an CFSReanalysis object.
 
         :param variable: str: variable to retrieve
         :param time: datetime: requested time
