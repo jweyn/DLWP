@@ -24,11 +24,11 @@ from keras.callbacks import History
 
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
 predictor_file = '%s/cfs_1979-2010_hgt_250-500_NH_T2.nc' % root_directory
-model_file = '%s/dlwp_1979-2010_hgt_500-1000_NH_T2F_CONVx5-upsample-dilate' % root_directory
+model_file = '%s/dlwp_1979-2010_hgt_250-500_NH_T2F_CONVx5-lstm-upsample-dilate' % root_directory
 model_is_convolutional = True
-model_is_recurrent = False
+model_is_recurrent = True
 min_epochs = 150
-max_epochs = 300
+max_epochs = 400
 batch_size = 216
 lambda_ = 1.e-4
 
@@ -43,9 +43,7 @@ n_sample = processor.data.dims['sample']
 # Validation set to use. Either an integer (number of validation samples, taken from the end), or an iterable of
 # pandas datetime objects. The train set can be set to the first <integer> samples, an iterable of dates, or None to
 # simply use the remaining points. Match the type of validation_set.
-start_date = datetime(2003, 1, 1, 6)
-end_date = datetime(2010, 12, 31, 6)
-validation_set = list(pd.date_range(start_date, end_date, freq='6H'))
+validation_set = list(pd.date_range(datetime(2003, 1, 1, 6), datetime(2010, 12, 31, 6), freq='6H'))
 train_set = None
 
 # For upsampling, we need an even number of lat/lon points. We'll crop out the north pole.
@@ -115,19 +113,19 @@ val_generator = DataGenerator(dlwp, validation_data, batch_size=batch_size)
 # Up-sampling convolutional network with LSTM layer
 cs = generator.convolution_shape
 layers = (
-    # ('Reshape', (generator.shape_2d,), {'input_shape': cs}),
-    # ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
-    # ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
-    # ('Reshape', ((cs[0], cs[1], cs[2] + 4, cs[3] + 4),), None),
-    # ('ConvLSTM2D', (4 * cs[-3], 3), {
-    #     'dilation_rate': 2,
-    #     'padding': 'valid',
-    #     'data_format': 'channels_first',
-    #     'activation': 'tanh',
-    #     'return_sequences': True,
-    #     'kernel_regularizer': l2(lambda_)
-    # }),
-    # ('Reshape', ((4 * cs[0] * cs[1], cs[2], cs[3]),), None),
+    ('Reshape', (generator.shape_2d,), {'input_shape': cs}),
+    ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
+    ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
+    ('Reshape', ((cs[0], cs[1], cs[2] + 4, cs[3] + 4),), None),
+    ('ConvLSTM2D', (4 * cs[1], 3), {
+        'dilation_rate': 2,
+        'padding': 'valid',
+        'data_format': 'channels_first',
+        'activation': 'tanh',
+        'return_sequences': True,
+        'kernel_regularizer': l2(lambda_)
+    }),
+    ('Reshape', ((4 * cs[0] * cs[1], cs[2], cs[3]),), None),
     ('PeriodicPadding2D', ((0, 2),), {
         'data_format': 'channels_first',
         'input_shape': cs
@@ -182,13 +180,13 @@ layers = (
     # ('BatchNormalization', None, {'axis': 1}),
     ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
     ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
-    ('Conv2D', (cs[0], 5), {  # cs[0] * cs[1]
+    ('Conv2D', (cs[0] * cs[1], 5), {  # cs[0]
         'dilation_rate': 1,
         'padding': 'valid',
         'activation': 'linear',
         'data_format': 'channels_first'
     }),
-    # ('Reshape', (generator.convolution_shape,), None)
+    ('Reshape', (generator.convolution_shape,), None)
 )
 
 # # Feed-forward dense neural network

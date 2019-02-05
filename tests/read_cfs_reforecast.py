@@ -5,6 +5,8 @@
 #
 
 """
+DEPRECATED
+
 Just read some CFS reforecast data and process it into netCDFs. This is not part of the DLWP module. That will be
 written to fully download and process reforecast data in the future.
 """

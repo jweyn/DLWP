@@ -8,4 +8,4 @@
 Data retrieval classes.
 """
 
-from .cfsr import CFSReanalysis
+from .cfsr import CFSReanalysis, CFSReforecast

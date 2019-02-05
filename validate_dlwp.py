@@ -13,6 +13,7 @@ from DLWP.model import verify
 from DLWP.util import load_model
 from DLWP.custom import latitude_weighted_loss
 from DLWP.model.preprocessing import train_test_split_ind
+from DLWP.data import CFSReforecast
 import keras.backend as K
 from keras.losses import mean_squared_error
 import numpy as np
@@ -27,16 +28,16 @@ from mpl_toolkits.basemap import Basemap
 
 # Open the data file
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
-predictor_file = '%s/cfs_1979-2010_hgt_250-500_NH_T2.nc' % root_directory
+predictor_file = '%s/cfs_1979-2010_hgt_250-500-1000_NH_T2.nc' % root_directory
 
-# Names of model files, located in the root_directory
+# Names of model files, located in the root_directory, and labels for those models (don't use /)
 models = [
-    'dlwp_1979-2010_hgt_250-500_NH_T2F_CONVx5-x2-upsample-dilate',
-    'dlwp_1979-2010_hgt_250-500_NH_T2F_CONVx5-upsample-dilate',
+    'dlwp_1979-2010_hgt_250-500-1000_NH_T2F_CONVx5-upsample-dilate',
+    'dlwp_1979-2010_hgt_500-1000_NH_T2F_CONVx5-upsample-dilate',
     'dlwp_1979-2010_hgt_500_NH_T2F_CONVx5-upsample-dilate'
 ]
 model_labels = [
-    'CNN 2-level 2x',
+    'CNN 3-level',
     'CNN 2-level',
     'CNN 1-level'
 ]
@@ -46,7 +47,7 @@ model_labels = [
 # the data that all models need.
 predictor_sel = [
     None,
-    None,
+    {'level': [500, 1000]},
     {'level': [500]}
 ]
 
@@ -60,14 +61,14 @@ validation_set = np.array(pd.date_range(start_date, end_date, freq='6H'), dtype=
 
 # Generate a verification array in memory. May use significant memory but is required if the validation set is not a
 # continuous selection from predictor dataset.
-generate_verification = True
+generate_verification = False
 
 # Load a CFS Reforecast model for comparison
-cfs_model_file = '%s/cfs_reforecast_5day_z500_2003-2010_interp.nc' % root_directory
-cfs_ds = xr.open_dataset(cfs_model_file)
-cfs_ds = cfs_ds.isel(lat=(cfs_ds.lat >= 0.0))  # Northern hemisphere only
-# Actually let's change the validation dates to those in the CFS dataset
-validation_set = [d for d in cfs_ds.time.values if d in validation_set]
+cfs_model_dir = '%s/../CFSR/reforecast' % root_directory
+cfs = CFSReforecast(root_directory=cfs_model_dir, fill_hourly=False)
+cfs.set_dates(validation_set)
+cfs.open()
+cfs_ds = cfs.Dataset.isel(lat=(cfs.Dataset.lat >= 0.0))  # Northern hemisphere only
 
 # Load a barotropic model for comparison
 baro_model_file = '%s/barotropic_%s-%s.nc' % (root_directory, start_date.year, end_date.year)
@@ -93,7 +94,7 @@ plot_history = False
 plot_zonal = False
 plot_mse = True
 mse_title = r'Forecast error: 2003-06; $\hat{Z}_{500}$; 20-70$^{\circ}$N'
-mse_file_name = 'mse_hgt_250-500_T2_20-70_CFS.pdf'
+mse_file_name = 'mse_hgt_250-500-1000_T2_20-70.pdf'
 
 
 #%% Define some plotting functions
@@ -172,7 +173,7 @@ def zonal_mean_plot(obs_mean, obs_std, pred_mean, pred_std, model_name):
     plt.show()
 
 
-#%% Iterate through the models and calculate their stats
+#%% Pre-processing
 
 # Use the predictor file as a wrapper
 processor = Preprocessor(None, predictor_file=predictor_file)
@@ -214,6 +215,9 @@ if generate_verification:
         verification[:, d] = valid_da.sel(
             sample=pd.date_range(date, date + np.timedelta64(timedelta(hours=6 * (num_forecast_steps - 1))),
                                  freq='6H')).values
+
+
+#%% Iterate through the models and calculate their stats
 
 for m, model in enumerate(models):
     print('Loading model %s...' % model)
@@ -348,12 +352,13 @@ if baro_ds is not None:
         baro_v = (baro_v - z500_mean) / z500_std
         mse.append(verify.forecast_error(baro_f, baro_v))
     model_labels.append('Barotropic')
+    baro_f, baro_v = None, None
 
 
 #%% Add the CFS model
 
 if cfs_ds is not None:
-    print('Loading CFS model data from %s...' % cfs_model_file)
+    print('Loading CFS model data...')
     if variable is None or level is None:
         raise ValueError("specific 'variable' and 'level' for Z500 must be specified to use CFS model model")
     cfs_ds = cfs_ds.isel(lat=((cfs_ds.lat >= lat_min) & (cfs_ds.lat <= lat_max)))
@@ -383,6 +388,7 @@ if cfs_ds is not None:
         cfs_v = (cfs_v - z500_mean) / z500_std
         mse.append(verify.forecast_error(cfs_f, cfs_v))
     model_labels.append('CFS')
+    cfs_f, cfs_v = None, None
 
 
 #%% Add persistence and climatology
@@ -408,10 +414,16 @@ model_labels.append('Climatology')
 fig = plt.figure()
 fig.set_size_inches(6, 4)
 for m, model in enumerate(model_labels):
-    if model != 'Barotropic':
-        plt.plot(f_hour, mse[m], label=model, linewidth=2.)
-    else:
+    if model == 'Barotropic':
         plt.plot(baro_forecast.f_hour, mse[m], label=model, linewidth=2.)
+    elif model == 'CFS':
+        plt.plot(cfs_forecast.f_hour, mse[m], label=model, linewidth=2.)
+    else:
+        plt.plot(f_hour, mse[m], label=model, linewidth=2.)
+plt.xlim([0, 72])
+plt.xticks(np.arange(0, 73, 12))
+plt.ylim([0, 0.2])
+plt.yticks(np.arange(0, 0.25, 0.05))
 plt.legend(loc='best')
 plt.grid(True, color='lightgray', zorder=-100)
 plt.xlabel('forecast hour')
