@@ -237,40 +237,58 @@ class DLWPNeuralNet(object):
         else:
             return predicted
 
-    def predict_timeseries(self, predictors, time_steps, use_time_dim=True, **kwargs):
+    def predict_timeseries(self, predictors, time_steps, step_sequence=False, keep_time_dim=False, **kwargs):
         """
         Make a timeseries prediction with the DLWPNeuralNet model. Also performs input feature scaling. Forward predict
         time_steps number of time steps, intelligently using the time dimension to run the model time_steps/time_dim
-        number of times and returning a time series of concatenated steps. The option use_time_dim disables knowledge
-        of a time dimension (which is assumed to be the second axis). If the model is not recurrent, then it is
-        assumed that the second dimension can be reshaped to (self.time_dim, num_channels).
+        number of times and returning a time series of concatenated steps. Alternatively, using step_sequences, one can
+        use only one predicted time step (the other inputs are copied from the previous input) at a time. If the model
+        is not recurrent, then it is assumed that the second dimension can be reshaped to (self.time_dim, num_channels).
 
         :param predictors: ndarray: predictor data
         :param time_steps: int: number of time steps to predict forward
-        :param use_time_dim: bool: if True, use time dimension (axis=1 in predictors) to concatenate the result into a
-            continuous time series
+        :param step_sequence: bool: if True, takes one step at a time in a time series sequence. That is, if a model
+            has a time_dim of t, the next forecast will use t-1 last steps from predictors plus the first step of the
+            last prediction as inputs.
+        :param keep_time_dim: if True, keep the time_step dimension in the output, otherwise integrates it into the
+            forecast_hour (first) dimension
         :param kwargs: passed to Keras 'predict' method
         :return: ndarray: model prediction; first dim is time
         """
         time_steps = int(time_steps)
         if time_steps < 1:
             raise ValueError("time_steps must be an int > 0")
-        if use_time_dim:
+        if not step_sequence:
             time_steps = int(np.ceil(1. * time_steps / self.time_dim))
         time_series = np.full((time_steps,) + predictors.shape, np.nan, dtype=np.float32)
         p = predictors.copy()
+        sample_dim = p.shape[0]
+        if self.is_recurrent:
+            feature_shape = p.shape[2:]
+        else:
+            feature_shape = p.shape[1:]
         for t in range(time_steps):
-            p = 1. * self.predict(p, **kwargs)
-            time_series[t, ...] = 1. * p  # step, sample, [time_step,] (features,)
-        if use_time_dim:
-            sample_dim = p.shape[0]
-            if self.is_recurrent:
-                feature_shape = p.shape[2:]
+            if step_sequence:
+                pr = self.predict(p, **kwargs)
+                pr_shape = pr.shape[:]
+                if not self.is_recurrent:
+                    pr = pr.reshape((sample_dim, self.time_dim, -1) + feature_shape[1:])
+                    p = p.reshape((sample_dim, self.time_dim, -1) + feature_shape[1:])
+                p = np.concatenate((p[:, 1:], pr[:, [0]]), axis=1)
+                if not self.is_recurrent:
+                    p = p.reshape(predictors.shape)
+                    pr = pr.reshape(pr_shape)
+                time_series[t, ...] = 1. * pr  # step, sample, [time_step,] (features,)
             else:
-                feature_shape = p.shape[1:]
-                time_series = time_series.reshape((time_steps, sample_dim, self.time_dim, -1) + feature_shape[1:])
-            time_series = time_series.transpose((0, 2, 1) + tuple(range(3, 3 + len(feature_shape))))
-            time_series = time_series.reshape((time_steps * self.time_dim, sample_dim, -1) + feature_shape[1:])
+                p = 1. * self.predict(p, **kwargs)
+                time_series[t, ...] = 1. * p  # step, sample, [time_step,] (features,)
+        time_series = time_series.reshape((time_steps, sample_dim, self.time_dim, -1) + feature_shape[1:])
+        if not keep_time_dim:
+            if step_sequence:
+                time_series = time_series[:, :, 0]
+            else:
+                time_series = time_series.transpose((0, 2, 1) + tuple(range(3, 3 + len(feature_shape))))
+                time_series = time_series.reshape((time_steps * self.time_dim, sample_dim, -1) + feature_shape[1:])
         return time_series
 
     def evaluate(self, predictors, targets, **kwargs):

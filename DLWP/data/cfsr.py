@@ -159,7 +159,7 @@ class CFSReanalysis(object):
         :param dates: list of datetime objects.
         :return:
         """
-        self.dataset_dates = sorted([d for d in dates if isinstance(d, datetime) and d.hour % 6 == 0])
+        self.dataset_dates = sorted(dates)
         if self._fill_hourly:
             day_set = sorted(set([datetime(d.year, d.month, d.day) for d in self.dataset_dates]))
             new_dates = []
@@ -656,7 +656,7 @@ class CFSReforecast(object):
         :param dates: list of datetime objects.
         :return:
         """
-        self.dataset_dates = sorted([d for d in dates if isinstance(d, datetime) and d.hour % 6 == 0])
+        self.dataset_dates = sorted(dates)
         if self._fill_hourly:
             day_set = sorted(set([datetime(d.year, d.month, d.day) for d in self.dataset_dates]))
             new_dates = []

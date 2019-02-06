@@ -61,22 +61,23 @@ validation_set = np.array(pd.date_range(start_date, end_date, freq='6H'), dtype=
 
 # Generate a verification array in memory. May use significant memory but is required if the validation set is not a
 # continuous selection from predictor dataset.
-generate_verification = False
+generate_verification = True
 
 # Load a CFS Reforecast model for comparison
 cfs_model_dir = '%s/../CFSR/reforecast' % root_directory
-cfs = CFSReforecast(root_directory=cfs_model_dir, fill_hourly=False)
+cfs = CFSReforecast(root_directory=cfs_model_dir, file_id='dlwp_', fill_hourly=False)
 cfs.set_dates(validation_set)
 cfs.open()
 cfs_ds = cfs.Dataset.isel(lat=(cfs.Dataset.lat >= 0.0))  # Northern hemisphere only
 
 # Load a barotropic model for comparison
-baro_model_file = '%s/barotropic_%s-%s.nc' % (root_directory, start_date.year, end_date.year)
+baro_model_file = '%s/barotropic_2003-2006.nc' % root_directory
 baro_ds = xr.open_dataset(baro_model_file)
 baro_ds = baro_ds.isel(lat=(baro_ds.lat >= 0.0))  # Northern hemisphere only
 
 # Number of forward integration weather forecast time steps
-num_forecast_steps = 24
+num_forecast_steps = 12
+step_sequence = True
 
 # Latitude bounds for MSE calculation
 lat_range = [20., 70.]
@@ -202,7 +203,7 @@ f_hour = np.arange(6., num_forecast_steps * 6. + 1., 6.)
 
 # Generate verification
 if generate_verification:
-    print('Generating validation set...')
+    print('Generating verification...')
     verification = xr.DataArray(
         np.zeros((num_forecast_steps, validation_data.dims['sample'], validation_data.dims['variable'],
                   validation_data.dims['level'], validation_data.dims['lat'], validation_data.dims['lon'])),
@@ -264,7 +265,7 @@ for m, model in enumerate(models):
 
     # Make a time series prediction and convert the predictors for comparison
     print('Predicting with model %s...' % model_labels[m])
-    time_series = dlwp.predict_timeseries(p_val, num_forecast_steps)
+    time_series = dlwp.predict_timeseries(p_val, num_forecast_steps, step_sequence=step_sequence)
     time_series = verify.add_metadata_to_forecast(time_series, f_hour, val_ds)
     p_series = verify.predictors_to_time_series(p_val, time_dim, has_time_dim=dlwp.is_recurrent, meta_ds=val_ds)
 
@@ -278,7 +279,7 @@ for m, model in enumerate(models):
             verif = verif.isel(lat=(verif.lat < 90.0))
     else:
         verif = verify.predictors_to_time_series(t_val, time_dim, has_time_dim=dlwp.is_recurrent,
-                                                    use_first_step=True, meta_ds=val_ds)
+                                                 use_first_step=True, meta_ds=val_ds)
 
     # Slice the arrays as we want
     time_series = time_series.sel(variable=(slice(None) if variable is None else variable),
@@ -331,8 +332,8 @@ if baro_ds is not None:
     else:
         baro_ds = baro_ds.sel(time=validation_set)
 
-    # Verify against the included forecast hour 0
-    baro_forecast = baro_ds.isel(f_hour=(baro_ds.f_hour > 0))
+    # Select the correct number of forecast hours
+    baro_forecast = baro_ds.isel(f_hour=(baro_ds.f_hour > 0)).isel(f_hour=slice(None, num_forecast_steps))
     baro_f = baro_forecast.variables['Z'].values
 
     # Normalize by the same std and mean as the predictor dataset
@@ -367,9 +368,9 @@ if cfs_ds is not None:
     else:
         cfs_ds = cfs_ds.sel(time=validation_set)
 
-    # Verify against the included forecast hour 0 # 6 temporarily
-    cfs_forecast = cfs_ds.isel(f_hour=(cfs_ds.f_hour > 0))
-    cfs_f = cfs_forecast.variables['Z'].values
+    # Select the correct number of forecast hours
+    cfs_forecast = cfs_ds.isel(f_hour=(cfs_ds.f_hour > 0)).isel(f_hour=slice(None, num_forecast_steps))
+    cfs_f = cfs_forecast.variables['z500'].values
 
     # Normalize by the same std and mean as the predictor dataset
     z500_mean = processor.data.sel(variable=variable, level=level).variables['mean'].values
@@ -383,8 +384,8 @@ if cfs_ds is not None:
             pass
         mse.append(verify.forecast_error(cfs_f, verif.values))
     else:
-        cfs_verif = cfs_ds.isel(f_hour=6)
-        cfs_v = cfs_verif.variables['Z'].values.squeeze()
+        cfs_verif = cfs_ds.isel(f_hour=6)  # should be 0 but we don't have analysis fields
+        cfs_v = cfs_verif.variables['z500'].values.squeeze()
         cfs_v = (cfs_v - z500_mean) / z500_std
         mse.append(verify.forecast_error(cfs_f, cfs_v))
     model_labels.append('CFS')
