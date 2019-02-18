@@ -109,9 +109,9 @@ def monthly_climo_error(da, val_set, n_fhour=None, method='mse', return_da=False
     monthly_climo = da.groupby('%s.month' % time_dim).mean(time_dim)
     anomaly = da.sel(**{time_dim: val_set}).groupby('%s.month' % time_dim) - monthly_climo
     if method == 'mse':
-        me = float((anomaly ** 2.).mean(xr.ALL_DIMS).values)
+        me = float((anomaly ** 2.).mean().values)
     elif method == 'mae':
-        me = float(anomaly.abs().mean(xr.ALL_DIMS).values)
+        me = float(anomaly.abs().mean().values)
     if n_fhour is not None:
         me = [me] * n_fhour
     if return_da:

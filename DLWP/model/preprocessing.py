@@ -61,7 +61,7 @@ class Preprocessor(object):
         return (int(np.prod(self.data.predictors.shape[1:-2])),) + self.data.predictors.shape[-2:]
 
     def data_to_samples(self, time_step=1, batch_samples=100, variables='all', levels='all', scale_variables=False,
-                        in_memory=False, overwrite=False, verbose=False):
+                        in_memory=False, chunk_size=128, overwrite=False, verbose=False):
         """
         Convert the data referenced by the data_obj in __init__ to samples ready for ingestion in a DLWP model. Write
         samples in batches of size batch_samples. The parameter scale_variables determines whether individual
@@ -72,6 +72,7 @@ class Preprocessor(object):
         :param variables: iter: list of variables to process; may be 'all' for all variables available
         :param levels: iter: list of integer pressure levels (mb); may be 'all'
         :param scale_variables: bool: if True, apply de-mean and scaling on a variable/level basis
+        :param chunk_size: int: size of the chunks in the sample (time) dimension)
         :param in_memory: bool: if True, speeds up operations by performing them in memory (may require lots of RAM)
         :param overwrite: bool: if True, overwrites any existing output files, otherwise, raises an error
         :param verbose: bool: print progress statements
@@ -80,6 +81,9 @@ class Preprocessor(object):
         # Check time step parameter
         if int(time_step) < 1:
             raise ValueError("'time_step' must be >= 1")
+        # Check chunk size
+        if int(chunk_size) < 1:
+            raise ValueError("'chunk_size' must be >= 1")
         # Test that data is loaded
         if self.raw_data is None:
             raise ValueError('cannot process when no data_obj was supplied at initialization')
@@ -172,14 +176,16 @@ class Preprocessor(object):
 
             # Create predictors and targets variables
             predictors = nc_fid.createVariable('predictors', np.float32,
-                                               ('sample', 'time_step', 'variable', 'level', 'lat', 'lon'))
+                                               ('sample', 'time_step', 'variable', 'level', 'lat', 'lon'),
+                                               chunksizes=(chunk_size, time_step, n_var, n_level, n_lat, n_lon))
             predictors.setncatts({
                 'long_name': 'Predictors',
                 'units': 'N/A',
                 '_FillValue': fill_value
             })
             targets = nc_fid.createVariable('targets', np.float32,
-                                            ('sample', 'time_step', 'variable', 'level', 'lat', 'lon'))
+                                            ('sample', 'time_step', 'variable', 'level', 'lat', 'lon'),
+                                            chunksizes=(chunk_size, time_step, n_var, n_level, n_lat, n_lon))
             targets.setncatts({
                 'long_name': 'Targets',
                 'units': 'N/A',

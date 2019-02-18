@@ -196,7 +196,7 @@ class DLWPNeuralNet(object):
             predictors, targets = self.imputer_transform(predictors, y=targets)
         predictors_scaled, targets_scaled = self.scaler_transform(predictors, targets)
         # Need to scale the validation data if it is given
-        if 'validation_data' in kwargs:
+        if 'validation_data' in kwargs and kwargs['validation_data'] is not None:
             if self.impute:
                 predictors_test_scaled, targets_test_scaled = self.imputer_transform(*kwargs['validation_data'])
             else:
@@ -409,7 +409,6 @@ class DataGenerator(Sequence):
             ds = self.ds.isel(sample=samples)
         else:
             ds = self.ds.isel(sample=slice(None))
-        ds.load()
         n_sample = ds.predictors.shape[0]
         p = ds.predictors.values.reshape((n_sample, -1))
         t = ds.targets.values.reshape((n_sample, -1))

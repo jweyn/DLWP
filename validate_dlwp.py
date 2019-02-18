@@ -20,6 +20,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from datetime import datetime, timedelta
+import matplotlib
+matplotlib.use('agg')
 import matplotlib.pyplot as plt
 from mpl_toolkits.basemap import Basemap
 
@@ -27,41 +29,38 @@ from mpl_toolkits.basemap import Basemap
 #%% User parameters
 
 # Open the data file
-root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
-predictor_file = '%s/cfs_1979-2010_hgt_250-500-1000_NH_T2.nc' % root_directory
+root_directory = '/Volumes/Lightning/DLWP'
+predictor_file = '%s/cfs_1979-2010_hgt-thick_300-500-700_NH_T2.nc' % root_directory
 
 # Names of model files, located in the root_directory, and labels for those models (don't use /)
 models = [
-    'dlwp_1979-2010_hgt_250-500-1000_NH_T2F_CONVx5-upsample-dilate',
-    'dlwp_1979-2010_hgt_500-1000_NH_T2F_CONVx5-upsample-dilate',
-    'dlwp_1979-2010_hgt_500_NH_T2F_CONVx5-upsample-dilate'
+    'dlwp_1979-2010_hgt_500_NH_T2F_FINAL-lstm',
+    'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm'
 ]
 model_labels = [
-    'CNN 3-level',
-    'CNN 2-level',
-    'CNN 1-level'
+    'Z500 CLSTM',
+    'Z500-THICK CLSTM'
 ]
 
 # Optional list of selections to make from the predictor dataset for each model. This is useful if, for example,
 # you want to examine models that have different numbers of vertical levels but one predictor dataset contains
 # the data that all models need.
 predictor_sel = [
-    None,
-    {'level': [500, 1000]},
-    {'level': [500]}
+    {'variable': ['HGT']},
+    None
 ]
 
 # Validation set to use. Either an integer (number of validation samples, taken from the end), or an iterable of
 # pandas datetime objects.
 # validation_set = 4 * (365 * 4 + 1)
-start_date = datetime(2003, 1, 1, 0)
-end_date = datetime(2006, 12, 31, 6)
+start_date = datetime(2007, 1, 1, 0)
+end_date = datetime(2009, 12, 31, 18)
 validation_set = np.array(pd.date_range(start_date, end_date, freq='6H'), dtype='datetime64')
 # validation_set = [d for d in validation_set if d.month in [1, 2, 12]]
 
 # Generate a verification array in memory. May use significant memory but is required if the validation set is not a
 # continuous selection from predictor dataset.
-generate_verification = True
+generate_verification = False
 
 # Load a CFS Reforecast model for comparison
 cfs_model_dir = '%s/../CFSR/reforecast' % root_directory
@@ -71,13 +70,13 @@ cfs.open()
 cfs_ds = cfs.Dataset.isel(lat=(cfs.Dataset.lat >= 0.0))  # Northern hemisphere only
 
 # Load a barotropic model for comparison
-baro_model_file = '%s/barotropic_2003-2006.nc' % root_directory
+baro_model_file = '%s/barotropic_2007-2010.nc' % root_directory
 baro_ds = xr.open_dataset(baro_model_file)
 baro_ds = baro_ds.isel(lat=(baro_ds.lat >= 0.0))  # Northern hemisphere only
 
 # Number of forward integration weather forecast time steps
 num_forecast_steps = 12
-step_sequence = True
+step_sequence = False
 
 # Latitude bounds for MSE calculation
 lat_range = [20., 70.]
@@ -88,14 +87,14 @@ variable = 'HGT'
 level = 500
 
 # Do specific plots
-plot_directory = './Plots'
+plot_directory = '%s/Plots' % root_directory
 plot_example = None  # None to disable or the date index of the sample
-plot_example_f_hour = 48  # Forecast hour index of the sample
+plot_example_f_hour = 24  # Forecast hour index of the sample
 plot_history = False
 plot_zonal = False
 plot_mse = True
-mse_title = r'Forecast error: 2003-06; $\hat{Z}_{500}$; 20-70$^{\circ}$N'
-mse_file_name = 'mse_hgt_250-500-1000_T2_20-70.pdf'
+mse_title = r'Forecast error: 2007-09; $\hat{Z}_{500}$; NH'  # 20-70$^{\circ}$N
+mse_file_name = 'mse_hgt-thick_500_T2_FINAL.pdf'
 
 
 #%% Define some plotting functions
@@ -258,7 +257,7 @@ for m, model in enumerate(models):
         val_ds = validation_data.sel(**predictor_sel[m])
     else:
         val_ds = validation_data.copy()
-    if 'upsample' in model.lower():
+    if 'upsample' in model.lower() or 'final' in model.lower():
         val_ds = val_ds.isel(lat=(val_ds.lat < 90.0))
     val_generator = DataGenerator(dlwp, val_ds, batch_size=216)
     p_val, t_val = val_generator.generate([], scale_and_impute=False)

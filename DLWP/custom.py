@@ -303,7 +303,7 @@ class RowConnected2D(LocallyConnected2D):
                                       regularizer=self.kernel_regularizer,
                                       constraint=self.kernel_constraint)
         if self.use_bias:
-            self.bias = self.add_weight(shape=(output_row, output_col, self.filters),
+            self.bias = self.add_weight(shape=(output_row, 1, self.filters),
                                         initializer=self.bias_initializer,
                                         name='bias',
                                         regularizer=self.bias_regularizer,

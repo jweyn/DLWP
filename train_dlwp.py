@@ -17,34 +17,40 @@ from DLWP.model.preprocessing import train_test_split_ind
 from DLWP.util import save_model
 from DLWP.custom import RNNResetStates, EarlyStoppingMin, latitude_weighted_loss
 from keras.regularizers import l2
-from keras.callbacks import History
+from keras.callbacks import History, TensorBoard
 
 
 #%% Open some data using the Preprocessor wrapper
 
-root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
-predictor_file = '%s/cfs_1979-2010_hgt_250-500_NH_T2.nc' % root_directory
-model_file = '%s/dlwp_1979-2010_hgt_250-500_NH_T2F_CONVx5-lstm-upsample-dilate' % root_directory
+root_directory = '/Volumes/Lightning/DLWP'
+predictor_file = '%s/cfs_1979-2010_hgt-thick_300-500-700_NH_T2.nc' % root_directory
+model_file = '%s/dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL' % root_directory
+log_directory = '%s/logs/thick-FINAL' % root_directory
 model_is_convolutional = True
-model_is_recurrent = True
-min_epochs = 150
-max_epochs = 400
-batch_size = 216
+model_is_recurrent = False
+min_epochs = 200
+max_epochs = 1000
+patience = 50
+batch_size = 64
 lambda_ = 1.e-4
 
 processor = Preprocessor(None, predictor_file=predictor_file)
-processor.open()
+processor.open(chunks={'sample': batch_size})
 if 'time_step' in processor.data.dims:
     time_dim = processor.data.dims['time_step']
 else:
     time_dim = 1
 n_sample = processor.data.dims['sample']
 
+# If system memory permits, loading the predictor data can greatly increase efficiency when training on GPUs, if the
+# train computation takes less time than the data loading.
+load_memory = True
+
 # Validation set to use. Either an integer (number of validation samples, taken from the end), or an iterable of
 # pandas datetime objects. The train set can be set to the first <integer> samples, an iterable of dates, or None to
 # simply use the remaining points. Match the type of validation_set.
-validation_set = list(pd.date_range(datetime(2003, 1, 1, 6), datetime(2010, 12, 31, 6), freq='6H'))
-train_set = None
+validation_set = list(pd.date_range(datetime(2003, 1, 1, 6), datetime(2006, 12, 31, 6), freq='6H'))
+train_set = list(pd.date_range(datetime(1979, 1, 1, 6), datetime(2003, 1, 1, 0), freq='6H'))
 
 # For upsampling, we need an even number of lat/lon points. We'll crop out the north pole.
 processor.data = processor.data.isel(lat=(processor.data.lat < 90.0))
@@ -65,6 +71,11 @@ if isinstance(validation_set, int):
         train_set = list(range(train_set))
     validation_data = processor.data.isel(sample=val_set)
     train_data = processor.data.isel(sample=train_set)
+elif validation_set is None:
+    if train_set is None:
+        train_set = processor.data.sample.values
+    validation_data = None
+    train_data = processor.data.sel(sample=train_set)
 else:  # we must have a list of datetimes
     if train_set is None:
         train_set = np.isin(processor.data.sample.values, np.array(validation_set, dtype='datetime64[ns]'),
@@ -74,7 +85,8 @@ else:  # we must have a list of datetimes
 
 # Build the data generators
 generator = DataGenerator(dlwp, train_data, batch_size=batch_size)
-val_generator = DataGenerator(dlwp, validation_data, batch_size=batch_size)
+if validation_data is not None:
+    val_generator = DataGenerator(dlwp, validation_data, batch_size=batch_size)
 
 
 #%% Compile the model structure with some generator data information
@@ -113,19 +125,21 @@ val_generator = DataGenerator(dlwp, validation_data, batch_size=batch_size)
 # Up-sampling convolutional network with LSTM layer
 cs = generator.convolution_shape
 layers = (
-    ('Reshape', (generator.shape_2d,), {'input_shape': cs}),
-    ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
-    ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
-    ('Reshape', ((cs[0], cs[1], cs[2] + 4, cs[3] + 4),), None),
-    ('ConvLSTM2D', (4 * cs[1], 3), {
-        'dilation_rate': 2,
-        'padding': 'valid',
-        'data_format': 'channels_first',
-        'activation': 'tanh',
-        'return_sequences': True,
-        'kernel_regularizer': l2(lambda_)
-    }),
-    ('Reshape', ((4 * cs[0] * cs[1], cs[2], cs[3]),), None),
+    # --- These layers add a convolutional LSTM at the beginning --- #
+    # ('Reshape', (generator.shape_2d,), {'input_shape': cs}),
+    # ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
+    # ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
+    # ('Reshape', ((cs[0], cs[1], cs[2] + 4, cs[3] + 4),), None),
+    # ('ConvLSTM2D', (4 * cs[1], 3), {
+    #     'dilation_rate': 2,
+    #     'padding': 'valid',
+    #     'data_format': 'channels_first',
+    #     'activation': 'tanh',
+    #     'return_sequences': True,
+    #     'kernel_regularizer': l2(lambda_)
+    # }),
+    # ('Reshape', ((4 * cs[0] * cs[1], cs[2], cs[3]),), None),
+    # -------------------------------------------------------------- #
     ('PeriodicPadding2D', ((0, 2),), {
         'data_format': 'channels_first',
         'input_shape': cs
@@ -180,13 +194,13 @@ layers = (
     # ('BatchNormalization', None, {'axis': 1}),
     ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
     ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
-    ('Conv2D', (cs[0] * cs[1], 5), {  # cs[0]
-        'dilation_rate': 1,
+    # --- Change the number of filters to cs[0] * cs[1] for LSTM model --- #
+    ('Conv2D', (cs[0], 5), {  # cs[0] * cs[1]
         'padding': 'valid',
         'activation': 'linear',
         'data_format': 'channels_first'
     }),
-    ('Reshape', (generator.convolution_shape,), None)
+    # ('Reshape', (generator.convolution_shape,), None)
 )
 
 # # Feed-forward dense neural network
@@ -205,7 +219,7 @@ layers = (
 #                                        axis=-2, weighting='midlatitude')
 
 # Build the model
-dlwp.build_model(layers, loss='mse', optimizer='adam', metrics=['mae'], gpus=2)
+dlwp.build_model(layers, loss='mse', optimizer='adam', metrics=['mae'])
 print(dlwp.model.summary())
 
 
@@ -220,12 +234,15 @@ p_fit, t_fit = generator.generate(fit_set, scale_and_impute=False)
 dlwp.init_fit(p_fit, t_fit)
 p_fit, t_fit = (None, None)
 
-# If system memory permits, loading the predictor data can greatly increase efficiency when training on GPUs, if the
-# train computation takes less time than the data loading.
-# generator.ds.load()
+if load_memory:
+    print('Loading data to memory...')
+    p_train, t_train = generator.generate([], scale_and_impute=False)
 
 # Load the validation data. Better to load in memory to avoid file read errors while training.
-p_val, t_val = val_generator.generate([], scale_and_impute=False)
+if validation_data is None:
+    val = None
+else:
+    val = val_generator.generate([], scale_and_impute=False)
 
 
 #%% Train, evaluate, and save the model
@@ -233,17 +250,23 @@ p_val, t_val = val_generator.generate([], scale_and_impute=False)
 # Train and evaluate the model
 start_time = time.time()
 history = History()
-early = EarlyStoppingMin(min_epochs=min_epochs, monitor='val_mean_absolute_error', min_delta=0., patience=20,
+early = EarlyStoppingMin(min_epochs=min_epochs, monitor='val_loss', min_delta=0., patience=patience,
                          restore_best_weights=True, verbose=1)
-dlwp.fit_generator(generator, epochs=max_epochs, verbose=1, validation_data=(p_val, t_val), use_multiprocessing=True,
-                   callbacks=[history, RNNResetStates(), early])
+tensorboard = TensorBoard(log_dir=log_directory, batch_size=batch_size, update_freq='epoch')
+if load_memory:
+    dlwp.fit(p_train, t_train, batch_size=batch_size, epochs=max_epochs, verbose=1, validation_data=val,
+             callbacks=[history, RNNResetStates(), early, tensorboard])
+else:
+    dlwp.fit_generator(generator, epochs=max_epochs, verbose=1, validation_data=val, use_multiprocessing=True,
+                       callbacks=[history, RNNResetStates(), early, tensorboard])
 end_time = time.time()
 
 # Evaluate the model
-score = dlwp.evaluate(p_val, t_val, verbose=0)
 print("\nTrain time -- %s seconds --" % (end_time - start_time))
-print('Test loss:', score[0])
-print('Test mean absolute error:', score[1])
+if validation_data is not None:
+    score = dlwp.evaluate(*val, verbose=0)
+    print('Validation loss:', score[0])
+    print('Validation mean absolute error:', score[1])
 
 # Save the model
 if model_file is not None:
