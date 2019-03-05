@@ -93,7 +93,7 @@ plot_example_f_hour = 24  # Forecast hour index of the sample
 plot_history = False
 plot_zonal = False
 plot_mse = True
-mse_title = r'Forecast error: 2007-09; $\hat{Z}_{500}$; NH'  # 20-70$^{\circ}$N
+mse_title = r'Forecast error: 2007-09; $\hat{Z}_{500}$; 20-70$^{\circ}$N'
 mse_file_name = 'mse_hgt-thick_500_T2_FINAL.pdf'
 
 
@@ -226,7 +226,7 @@ for m, model in enumerate(models):
     if 'weight' in model.lower():
         lats = validation_data.lat.values
         output_shape = (validation_data.dims['lat'], validation_data.dims['lon'])
-        if 'upsample' in model.lower():
+        if 'upsample' in model.lower() or 'final' in model.lower():
             lats = lats[1:]
         customs = {'loss': latitude_weighted_loss(mean_squared_error, lats, output_shape, axis=-2,
                                                   weighting='midlatitude')}
@@ -420,8 +420,8 @@ for m, model in enumerate(model_labels):
         plt.plot(cfs_forecast.f_hour, mse[m], label=model, linewidth=2.)
     else:
         plt.plot(f_hour, mse[m], label=model, linewidth=2.)
-plt.xlim([0, 72])
-plt.xticks(np.arange(0, 73, 12))
+plt.xlim([0, 6*num_forecast_steps])
+plt.xticks(np.arange(0, 6*num_forecast_steps+1, 12))
 plt.ylim([0, 0.2])
 plt.yticks(np.arange(0, 0.25, 0.05))
 plt.legend(loc='best')

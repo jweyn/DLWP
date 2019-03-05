@@ -113,7 +113,7 @@ def monthly_climo_error(da, val_set, n_fhour=None, method='mse', return_da=False
     elif method == 'mae':
         me = float(anomaly.abs().mean().values)
     if n_fhour is not None:
-        me = [me] * n_fhour
+        me = np.array([me] * n_fhour)
     if return_da:
         return me, anomaly
     else:
