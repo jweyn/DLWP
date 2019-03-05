@@ -171,18 +171,18 @@ class PeriodicPadding2D(ZeroPadding2D):
             left_slice = slice(inputs.shape[3] - self.padding[1][0], inputs.shape[3])
             right_slice = slice(0, self.padding[1][1])
             # Pad the horizontal
-            outputs = tf.concat([inputs[:, :, :, left_slice], inputs, inputs[:, :, :, right_slice]], axis=3)
+            outputs = K.concatenate([inputs[:, :, :, left_slice], inputs, inputs[:, :, :, right_slice]], axis=3)
             # Pad the vertical
-            outputs = tf.concat([outputs[:, :, top_slice], outputs, outputs[:, :, bottom_slice]], axis=2)
+            outputs = K.concatenate([outputs[:, :, top_slice], outputs, outputs[:, :, bottom_slice]], axis=2)
         else:
             top_slice = slice(inputs.shape[1] - self.padding[0][0], inputs.shape[1])
             bottom_slice = slice(0, self.padding[0][1])
             left_slice = slice(inputs.shape[2] - self.padding[1][0], inputs.shape[2])
             right_slice = slice(0, self.padding[1][1])
             # Pad the horizontal
-            outputs = tf.concat([inputs[:, :, left_slice], inputs, inputs[:, :, right_slice]], axis=2)
+            outputs = K.concatenate([inputs[:, :, left_slice], inputs, inputs[:, :, right_slice]], axis=2)
             # Pad the vertical
-            outputs = tf.concat([outputs[:, top_slice], outputs, outputs[:, bottom_slice]], axis=1)
+            outputs = K.concatenate([outputs[:, top_slice], outputs, outputs[:, bottom_slice]], axis=1)
         return outputs
 
 
