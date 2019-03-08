@@ -268,6 +268,8 @@ class DLWPNeuralNet(object):
         else:
             feature_shape = p.shape[1:]
         for t in range(time_steps):
+            if 'verbose' in kwargs and kwargs['verbose'] > 0:
+                print('Time step %d/%d' % (t+1, time_steps))
             if step_sequence:
                 pr = self.predict(p, **kwargs)
                 pr_shape = pr.shape[:]

@@ -11,11 +11,13 @@ Simple routines for evaluating the performance of a DLWP model.
 from DLWP.model import DataGenerator, Preprocessor
 from DLWP.model import verify
 from DLWP.util import load_model
+from DLWP.data import CFSReforecast
 import keras.backend as K
 import numpy as np
 import pandas as pd
 import xarray as xr
 from datetime import datetime, timedelta
+import string
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gs
 from mpl_toolkits.basemap import Basemap
@@ -25,36 +27,42 @@ from mpl_toolkits.basemap import Basemap
 
 # Open the data file
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
-predictor_file = '%s/cfs_1979-2010_hgt_250-500-1000_NH_T2.nc' % root_directory
+predictor_file = '%s/cfs_1979-2010_hgt-thick_300-500-700_NH_T2.nc' % root_directory
 
-# Names of model files, located in the root_directory
+# Names of model files, located in the root_directory, and labels for those models (don't use /)
 models = [
-    'dlwp_1979-2010_hgt_250-500_NH_T2F_CONVx5-upsample-dilate',
-    'dlwp_1979-2010_hgt_500-1000_NH_T2F_CONVx5-upsample-dilate',
-    'dlwp_1979-2010_hgt_500_NH_T2F_CONVx5-upsample-dilate'
+    'dlwp_1979-2010_hgt_500_NH_T2F_FINAL',
+    'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL',
+    'dlwp_1979-2010_hgt_500_NH_T2F_FINAL-lstm',
+    'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm'
 ]
 model_labels = [
-    'CNN 250-500',
-    'CNN 500-1000',
-    'CNN 500'
+    '$Z$',
+    r'$\tau$',
+    '$Z$ LSTM',
+    r'$\tau$ LSTM'
 ]
 
 # Optional list of selections to make from the predictor dataset for each model. This is useful if, for example,
 # you want to examine models that have different numbers of vertical levels but one predictor dataset contains
 # the data that all models need.
 predictor_sel = [
-    {'level': [250, 500]},
-    {'level': [500, 1000]},
-    {'level': [500]}
+    {'variable': ['HGT']},
+    None,
+    {'variable': ['HGT']},
+    None
 ]
 
-# Load the result of a barotropic model for comparison
-baro_model_file = '%s/barotropic_2003-2006.nc' % root_directory
+# Load a barotropic model
+baro_model_file = '%s/barotropic_2007-2010.nc' % root_directory
 baro_ds = xr.open_dataset(baro_model_file, cache=False)
-baro_ds = baro_ds.isel(lat=(baro_ds.lat >= 0.0))  # Northern hemisphere only
+
+# Load the CFS model
+cfs_model_dir = '%s/../CFSR/reforecast' % root_directory
+cfs = CFSReforecast(root_directory=cfs_model_dir, file_id='dlwp_', fill_hourly=False)
 
 # Date(s) of plots: the initialization time
-plot_dates = list(pd.date_range('2003-02-14', '2003-02-22', freq='D').to_pydatetime())
+plot_dates = list(pd.date_range('2007-04-12', '2007-04-17', freq='D').to_pydatetime())
 plot_forecast_hour = 24
 model_dt = 6
 
@@ -70,7 +78,7 @@ longitude_range = [220., 300.]
 # Plot options
 plot_type = 'contour'
 plot_errors = True
-plot_colormap = 'YlGnBu_r'
+plot_colormap = 'winter'
 plot_colorbars = False
 contour_range = [4800, 6000]
 contour_step = 60
@@ -78,7 +86,7 @@ error_maxmin = 240
 
 # Output file and other small details
 plot_directory = './Plots'
-plot_file_name = 'MAP_2-level_24'
+plot_file_name = 'MAP_FINAL_24'
 plot_file_type = 'pdf'
 
 
@@ -86,13 +94,13 @@ plot_file_type = 'pdf'
 
 def make_plot(m, time, init, verif, forecasts, model_names, skip_plots=(), file_name=None):
     num_panels = len(forecasts) + 2
-    num_rows = int(np.ceil(num_panels / 2))
+    num_cols = int(np.ceil(num_panels / 2))
     verif_time = time + timedelta(hours=plot_forecast_hour)
 
     fig = plt.figure()
-    fig.set_size_inches(12, 5 * num_rows)
-    gs1 = gs.GridSpec(num_rows, 2)
-    gs1.update(wspace=0.10, hspace=0.10)
+    fig.set_size_inches(4 * num_cols, 6)
+    gs1 = gs.GridSpec(2, num_cols)
+    gs1.update(wspace=0.04, hspace=0.04)
 
     plot_fn = getattr(m, plot_type)
     contours = np.arange(np.min(contour_range), np.max(contour_range), contour_step)
@@ -102,25 +110,26 @@ def make_plot(m, time, init, verif, forecasts, model_names, skip_plots=(), file_
         ax = plt.subplot(gs1[n])
         lons, lats = np.meshgrid(da.lon, da.lat)
         x, y = m(lons, lats)
+        m.drawcoastlines(color=(0.7, 0.7, 0.7))
+        m.drawparallels(np.arange(0., 91., 30.))
+        m.drawmeridians(np.arange(0., 361., 60.))
         if diff is not None:
             m.pcolormesh(x, y, da.values - diff.values, vmin=-error_maxmin, vmax=error_maxmin, cmap='seismic',
                          alpha=0.4)
+            # plt.colorbar()
         cs = plot_fn(x, y, da.values, contours, cmap=plot_colormap)
         plt.clabel(cs, fmt='%1.0f')
-        m.drawcoastlines()
-        m.drawparallels(np.arange(0., 91., 30.))
-        m.drawmeridians(np.arange(0., 361., 60.))
-        ax.set_title(title)
+        ax.text(0.01, 0.01, title, horizontalalignment='left', verticalalignment='bottom', transform=ax.transAxes)
 
-    plot_panel(0, init, 'Initial (%s)' % datetime.strftime(time, '%HZ %e %b %Y'))
-    plot_panel(1, verif, 'Verification (%s)' % datetime.strftime(verif_time, '%HZ %e %b %Y'))
+    plot_panel(0, init, 'a) Initial (%s)' % datetime.strftime(time, '%HZ %e %b %Y'))
+    plot_panel(1, verif, 'b) Verification (%s)' % datetime.strftime(verif_time, '%HZ %e %b %Y'))
     plot_num = 2
     for f, forecast in enumerate(forecasts):
         if f + 2 in skip_plots:
             plot_num += 1
         if plot_errors is not None:
             diff = verif
-        plot_panel(plot_num, forecast, '%s (%s)' % (model_names[f], datetime.strftime(verif_time, '%HZ %e %b %Y')))
+        plot_panel(plot_num, forecast, '%s) %s' % (string.ascii_lowercase[f+2], model_names[f]))
         plot_num += 1
 
     if file_name is not None:
@@ -172,7 +181,7 @@ for mod, model in enumerate(models):
         val_ds = dataset.sel(**predictor_sel[mod])
     else:
         val_ds = dataset.copy()
-    if 'upsample' in model.lower():
+    if 'upsample' in model.lower() or 'final' in model.lower():
         val_ds = val_ds.isel(lat=(val_ds.lat < 90.0))
     val_generator = DataGenerator(dlwp, val_ds, batch_size=216)
     p_val, t_val = val_generator.generate([], scale_and_impute=False)
@@ -210,10 +219,29 @@ if baro_ds is not None:
     model_labels.append('Barotropic')
 
 
+#%% Add the CFS model
+
+if cfs is not None:
+    cfs.set_dates(sel_dates)
+    cfs.open()
+    cfs_ds = cfs.Dataset.sel(f_hour=(cfs.Dataset.f_hour <= plot_forecast_hour), time=plot_dates,
+                             lat=((cfs.Dataset.lat >= lat_min) & (cfs.Dataset.lat <= lat_max)),
+                             lon=((cfs.Dataset.lon >= lon_min) & (cfs.Dataset.lon <= lon_max)))
+    cfs_ds.load()
+    if not scale_variables:
+        cfs_ds['z500'][:] = (cfs_ds['z500'] - z500_mean) / z500_std
+    model_forecasts.append(cfs_ds['z500'])
+    model_labels.append('CFS')
+
+
 #%% Run the plots
 
 basemap = Basemap(llcrnrlon=lon_min, llcrnrlat=lat_min, urcrnrlon=lon_max, urcrnrlat=lat_max,
                   resolution='l', projection='cyl', lat_0=40., lon_0=0.)
+
+# Rearrange so that Baro/CFS are at the beginning
+model_labels = model_labels[mod+1:] + model_labels[:mod+1]
+model_forecasts = model_forecasts[mod+1:] + model_forecasts[:mod+1]
 
 for date in plot_dates:
     print('Plotting for %s...' % date)

@@ -16,6 +16,7 @@ from DLWP.model.preprocessing import train_test_split_ind
 from DLWP.data import CFSReforecast
 import keras.backend as K
 from keras.losses import mean_squared_error
+import re
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -29,23 +30,35 @@ from mpl_toolkits.basemap import Basemap
 #%% User parameters
 
 # Open the data file
-root_directory = '/Volumes/Lightning/DLWP'
+root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
 predictor_file = '%s/cfs_1979-2010_hgt-thick_300-500-700_NH_T2.nc' % root_directory
 
 # Names of model files, located in the root_directory, and labels for those models (don't use /)
 models = [
+    'dlwp_1979-2010_hgt_500_NH_T2F_FINAL',
+    'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL',
     'dlwp_1979-2010_hgt_500_NH_T2F_FINAL-lstm',
-    'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm'
+    'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm',
+    'dlwp_1979-2010_hgt_500_NH_T2F_FINAL-lstm-row',
+    'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm-row'
 ]
 model_labels = [
-    'Z500 CLSTM',
-    'Z500-THICK CLSTM'
+    '$Z$',
+    r'$\tau$',
+    '$Z$ LSTM',
+    r'$\tau$ LSTM',
+    '$Z$ LSTM ROW',
+    r'$\tau$ LSTM ROW',
 ]
 
 # Optional list of selections to make from the predictor dataset for each model. This is useful if, for example,
 # you want to examine models that have different numbers of vertical levels but one predictor dataset contains
 # the data that all models need.
 predictor_sel = [
+    {'variable': ['HGT']},
+    None,
+    {'variable': ['HGT']},
+    None,
     {'variable': ['HGT']},
     None
 ]
@@ -60,7 +73,7 @@ validation_set = np.array(pd.date_range(start_date, end_date, freq='6H'), dtype=
 
 # Generate a verification array in memory. May use significant memory but is required if the validation set is not a
 # continuous selection from predictor dataset.
-generate_verification = False
+generate_verification = True
 
 # Load a CFS Reforecast model for comparison
 cfs_model_dir = '%s/../CFSR/reforecast' % root_directory
@@ -87,17 +100,21 @@ variable = 'HGT'
 level = 500
 
 # Do specific plots
-plot_directory = '%s/Plots' % root_directory
+plot_directory = './Plots'
 plot_example = None  # None to disable or the date index of the sample
 plot_example_f_hour = 24  # Forecast hour index of the sample
 plot_history = False
 plot_zonal = False
 plot_mse = True
-mse_title = r'Forecast error: 2007-09; $\hat{Z}_{500}$; 20-70$^{\circ}$N'
-mse_file_name = 'mse_hgt-thick_500_T2_FINAL.pdf'
+mse_title = r'$\hat{Z}_{500}$; 2007-2009; 20-70$^{\circ}$N'
+mse_file_name = 'mse_hgt-thick_FINAL_20-70_336h.pdf'
 
 
 #%% Define some plotting functions
+
+def remove_chars(s):
+    return ''.join(re.split('[$/\\\\]', s))
+
 
 def history_plot(train_hist, val_hist, model_name):
     fig = plt.figure()
@@ -109,7 +126,7 @@ def history_plot(train_hist, val_hist, model_name):
     plt.ylabel('MAE')
     plt.legend(loc='best')
     plt.title('%s training history' % model_name)
-    plt.savefig('%s/%s_history.pdf' % (plot_directory, model_name), bbox_inches='tight')
+    plt.savefig('%s/%s_history.pdf' % (plot_directory, remove_chars(model_name)), bbox_inches='tight')
     plt.show()
 
 
@@ -151,7 +168,8 @@ def example_plot(base, verif, forecast, model_name, plot_diff=True):
     m.drawparallels(np.arange(0., 91., 45.))
     m.drawmeridians(np.arange(0., 361., 90.))
     ax.set_title('$t=%d$ forecast (%s)' % (plot_example_f_hour, forecast_time))
-    plt.savefig('%s/%s_example_%d.pdf' % (plot_directory, model_name, plot_example_f_hour), bbox_inches='tight')
+    plt.savefig('%s/%s_example_%d.pdf' % (plot_directory, remove_chars(model_name), plot_example_f_hour),
+                bbox_inches='tight')
     plt.show()
 
 
@@ -169,7 +187,7 @@ def zonal_mean_plot(obs_mean, obs_std, pred_mean, pred_std, model_name):
     plt.xlabel('zonal mean height')
     plt.ylabel('latitude')
     plt.ylim([0., 90.])
-    plt.savefig('%s/%s_zonal_climo.pdf' % (plot_directory, model_name), bbox_inches='tight')
+    plt.savefig('%s/%s_zonal_climo.pdf' % (plot_directory, remove_chars(model_name)), bbox_inches='tight')
     plt.show()
 
 
@@ -264,7 +282,7 @@ for m, model in enumerate(models):
 
     # Make a time series prediction and convert the predictors for comparison
     print('Predicting with model %s...' % model_labels[m])
-    time_series = dlwp.predict_timeseries(p_val, num_forecast_steps, step_sequence=step_sequence)
+    time_series = dlwp.predict_timeseries(p_val, num_forecast_steps, step_sequence=step_sequence, verbose=1)
     time_series = verify.add_metadata_to_forecast(time_series, f_hour, val_ds)
     p_series = verify.predictors_to_time_series(p_val, time_dim, has_time_dim=dlwp.is_recurrent, meta_ds=val_ds)
 
