@@ -5,15 +5,16 @@
 #
 
 """
-Utilities for retrieving and processing GEFS Reforecast 2 ensemble data using XArray.
+Utilities for retrieving and processing CFS reanalysis and reforecast data using XArray.
 For now, we only implement the regularly-gridded 1-degree data. Support for variables on the native Gaussian ~0.5
 degree grid may come in the future.
 """
 
 import os
+import warnings
+import itertools as it
 import numpy as np
 import netCDF4 as nc
-import pygrib
 import pandas as pd
 import xarray as xr
 from scipy.interpolate import RectBivariateSpline
@@ -22,6 +23,10 @@ try:
     from urllib.request import urlopen
 except ImportError:
     from urllib import urlopen
+try:
+    import pygrib
+except ImportError:
+    warnings.warn("module 'pygrib' not found; processing of raw CFS data unavailable.")
 
 
 # ==================================================================================================================== #
@@ -39,6 +44,19 @@ def _check_exists(file_name, path=False):
         return exists, local_file
     else:
         return exists
+
+
+# For some reason, multiprocessing.Pool.map is placing arguments passed to the function inside another length-1 tuple.
+# Much clearer programming would have required arguments of obj, m, month, *args here so that the user knows to include
+# the CFS object, month index, month dates, and other arguments correctly.
+def call_process_month(args):
+    obj = args[0]
+    obj._process_month(*args[1:])
+
+
+def call_fetch(args):
+    obj = args[0]
+    obj._fetch(*args[1:])
 
 
 # Format strings for files to read/write
@@ -195,7 +213,7 @@ class CFSReanalysis(object):
             raise ValueError('no latitude/longitude points within 1 degree of requested lat/lon!')
         return np.unravel_index(np.argmin(distance, axis=None), distance.shape)
 
-    def retrieve(self, dates, verbose=False):
+    def retrieve(self, dates, n_proc=4, verbose=False):
         """
         Retrieves CFS reanalysis data for the given datetimes, and writes them to the local directory. The same
         directory structure (%Y/%Y%m/%Y%m%d/file_name) is used locally as on the server. Creates subdirectories if
@@ -203,6 +221,8 @@ class CFSReanalysis(object):
 
         :param dates: list or tuple: date or datetime objects of of analysis times. May be 'all', in which case
             all dates in the object's 'dataset_dates' attributes are retrieved.
+        :param n_proc: int: if >1, fetches files in parallel. This speeds up performance but may not scale well if
+            internet I/O is the bottleneck. Set to 0 to use all available threads.
         :param verbose: bool: include progress print statements
         :return: None
         """
@@ -233,32 +253,51 @@ class CFSReanalysis(object):
             if grib_file_name not in self.raw_files:
                 self.raw_files.append(grib_file_name)
 
-        # Retrieve the files
-        for file in self.raw_files:
-            local_file = '%s/%s' % (self._root_directory, file)
-            if _check_exists(local_file):
-                if verbose:
-                    print('local file %s exists; omitting' % local_file)
-                continue
-            remote_file = '%s/%s' % (self._root_url, file)
+        if n_proc == 0 or n_proc > 1:
+            try:
+                import multiprocessing
+                if n_proc == 0:
+                    n_proc = multiprocessing.cpu_count()
+            except ImportError:
+                warnings.warn("'multiprocessing' module not available; falling back to serial")
+                n_proc = 1
+
+        if n_proc == 1:
+            for file in self.raw_files:
+                call_fetch((self, file, verbose))
+        else:
+            pool = multiprocessing.Pool(processes=n_proc)
+            pool.map(call_fetch, zip(it.repeat(self), self.raw_files, it.repeat(verbose)))
+            pool.close()
+            pool.terminate()
+            pool.join()
+
+    def _fetch(self, f, verbose):
+        pid = os.getpid()
+        local_file = '%s/%s' % (self._root_directory, f)
+        if _check_exists(local_file):
             if verbose:
-                print('downloading %s' % remote_file)
+                print('PID %s: local file %s exists; omitting' % (pid, local_file))
+            return
+        remote_file = '%s/%s' % (self._root_url, f)
+        if verbose:
+            print('PID %s: downloading %s' % (pid, remote_file))
+        try:
+            response = urlopen(remote_file)
+            with open(local_file, 'wb') as fd:
+                fd.write(response.read())
+        except BaseException as e:
+            print('warning: failed to download %s, retrying' % remote_file)
             try:
                 response = urlopen(remote_file)
                 with open(local_file, 'wb') as fd:
                     fd.write(response.read())
             except BaseException as e:
-                print('warning: failed to download %s, retrying' % remote_file)
-                try:
-                    response = urlopen(remote_file)
-                    with open(local_file, 'wb') as fd:
-                        fd.write(response.read())
-                except BaseException as e:
-                    print('warning: failed to download %s' % remote_file)
-                    print('* Reason: "%s"' % str(e))
+                print('warning: failed to download %s' % remote_file)
+                print('* Reason: "%s"' % str(e))
 
     def write(self, variables='all', dates='all', levels='all', write_into_existing=True, omit_existing=False,
-              delete_raw_files=False, verbose=False):
+              delete_raw_files=False, n_proc=4, verbose=False):
         """
         Reads raw CFS reanalysis files for the given dates (list or tuple form) and specified variables and levels and
         writes the data to reformatted netCDF files. Processed files are saved under self._root_directory/processed;
@@ -276,6 +315,8 @@ class CFSReanalysis(object):
             are known to be complete.
         :param delete_raw_files: bool: if True, deletes the original data files from which the processed versions were
             made
+        :param n_proc: int: if >1, runs write tasks in parallel, one per month of data. This speeds up performance but
+            may not scale well if disk I/O is the bottleneck. Set to 0 to use all available threads.
         :param verbose: bool: include progress print statements
         :return:
         """
@@ -301,10 +342,46 @@ class CFSReanalysis(object):
         if len(levels) == 0:
             print('CFSReanalysis.write: no pressure levels specified; will do nothing.')
             return
+        if int(n_proc) < 0:
+            raise ValueError("'multiprocess' must be an integer >= 0")
         self.dataset_variables = list(variables)
 
+        # Generate monthly batches of dates
+        dates_index = pd.DatetimeIndex(dates).sort_values()
+        months = dates_index.to_period('M')
+        unique_months = months.unique()
+        month_list = []
+        for nm in range(len(unique_months)):
+            month_list.append(list(dates_index[months == unique_months[nm]].to_pydatetime()))
+
+        if n_proc == 0 or n_proc > 1:
+            try:
+                import multiprocessing
+                if n_proc == 0:
+                    n_proc = multiprocessing.cpu_count()
+            except ImportError:
+                warnings.warn("'multiprocessing' module not available; falling back to serial")
+                n_proc = 1
+
+        if n_proc == 1:
+            for nm, month in enumerate(month_list):
+                call_process_month((self, nm, month, unique_months, variables, levels, write_into_existing,
+                                    omit_existing, delete_raw_files, verbose))
+        else:
+            pool = multiprocessing.Pool(processes=n_proc)
+            pool.map(call_process_month, zip(it.repeat(self), range(len(month_list)), month_list,
+                                             it.repeat(unique_months), it.repeat(variables), it.repeat(levels),
+                                             it.repeat(write_into_existing), it.repeat(omit_existing),
+                                             it.repeat(delete_raw_files), it.repeat(verbose)))
+            pool.close()
+            pool.terminate()
+            pool.join()
+
+    # Define a function for multi-processing
+    def _process_month(self, m, month, unique_months, variables, levels, write_into_existing, omit_existing,
+                       delete_raw_files, verbose):
         # Define some data reading functions that also write to the output
-        def read_write_grib_lat_lon(file_name):
+        def read_write_grib_lat_lon(file_name, nc_fid):
             exists, exists_file_name = _check_exists(file_name, path=True)
             if not exists:
                 raise IOError('File %s not found.' % file_name)
@@ -319,7 +396,7 @@ class CFSReanalysis(object):
                 print('* Warning: cannot get lat/lon from grib file %s' % exists_file_name)
                 raise
             if verbose:
-                print('Writing latitude and longitude')
+                print('PID %s: Writing latitude and longitude' % pid)
             nc_var = nc_fid.createVariable('lat', np.float32, ('lat',), zlib=True)
             nc_var.setncatts({
                 'long_name': 'Latitude',
@@ -334,15 +411,13 @@ class CFSReanalysis(object):
             nc_fid.variables['lon'][:] = lon
             grib_data.close()
 
-        def read_write_grib(file_name, time_index):
+        def read_write_grib(file_name, time_index, nc_fid):
             exists, exists_file_name = _check_exists(file_name, path=True)
             if not exists:
                 print('* Warning: file %s not found' % file_name)
                 return
             if verbose:
-                print('Loading %s' % exists_file_name)
-            if verbose:
-                print('  Reading')
+                print('PID %s: Reading %s' % (pid, exists_file_name))
             grib_data = pygrib.open(file_name)
             # Have to do this the hard way, because grib_index doesn't work on these 'multi-field' files
             grib_index = []
@@ -353,13 +428,13 @@ class CFSReanalysis(object):
                 except RuntimeError:
                     grib_index.append([])
             if verbose:
-                print('Variables to fetch: %s' % variables)
+                print('PID %s: Variables to fetch: %s' % (pid, variables))
             for row in range(grib2_table.shape[0]):
                 var = grib2_table[row, 0]
                 if var in variables:
                     if var not in nc_fid.variables.keys():
                         if verbose:
-                            print('Creating variable %s' % var)
+                            print('PID %s: Creating variable %s' % (pid, var))
                         nc_var = nc_fid.createVariable(var, np.float32, ('time', 'level', 'lat', 'lon'), zlib=True)
                         nc_var.setncatts({
                             'long_name': grib2_table[row, 4],
@@ -369,7 +444,7 @@ class CFSReanalysis(object):
                     for level_index, level in enumerate(levels):
                         try:
                             if verbose:
-                                print('Writing %s at level %d' % (var, level))
+                                print('PID %s: Writing %s at level %d' % (pid, var, level))
                             # Match a list containing discipline, parameterCategory, parameterNumber, level.
                             # Add one because grib indexing starts at 1.
                             grib_key = grib_index.index([int(grib2_table[row, 1]), int(grib2_table[row, 2]),
@@ -386,88 +461,80 @@ class CFSReanalysis(object):
             grib_data.close()
             return
 
-        # Generate monthly batches of dates
-        dates_index = pd.DatetimeIndex(dates).sort_values()
-        months = dates_index.to_period('M')
-        unique_months = months.unique()
-        month_list = []
-        for m in range(len(unique_months)):
-            month_list.append(list(dates_index[months == unique_months[m]].to_pydatetime()))
-
         # We're gonna have to do this the ugly way, with the netCDF4 module.
         # Iterate over months, create a netCDF file for the month, and fill in all datetimes we want
-        for m, month in enumerate(month_list):
-            # Create netCDF file, or append
-            nc_file_dir = '%s/processed' % self._root_directory
-            os.makedirs(nc_file_dir, exist_ok=True)
-            nc_file_name = '%s/%s%s.nc' % (nc_file_dir, self._file_id, datetime.strftime(month[0], '%Y%m'))
-            if verbose:
-                print('Writing to file %s' % nc_file_name)
-            nc_file_open_type = 'w'
-            init_coord = True
-            if os.path.isfile(nc_file_name):
-                if omit_existing:
-                    if verbose:
-                        print('Omitting file %s; exists' % nc_file_name)
-                    continue
-                if write_into_existing:
-                    nc_file_open_type = 'a'
-                    init_coord = False
-                else:
-                    os.remove(nc_file_name)
-            nc_fid = nc.Dataset(nc_file_name, nc_file_open_type, format='NETCDF4')
-
-            # Initialize coordinates, if needed
-            time_axis = pd.DatetimeIndex(start=unique_months[m].start_time, end=unique_months[m].end_time,
-                                         freq='6H').to_pydatetime()
-            if init_coord:
-                # Create dimensions
+        # Create netCDF file, or append
+        pid = os.getpid()
+        nc_file_dir = '%s/processed' % self._root_directory
+        os.makedirs(nc_file_dir, exist_ok=True)
+        nc_file_name = '%s/%s%s.nc' % (nc_file_dir, self._file_id, datetime.strftime(month[0], '%Y%m'))
+        if verbose:
+            print('PID %s: Writing to file %s' % (pid, nc_file_name))
+        nc_file_open_type = 'w'
+        init_coord = True
+        if os.path.isfile(nc_file_name):
+            if omit_existing:
                 if verbose:
-                    print('Creating coordinate dimensions')
-                nc_fid.description = 'Selected variables and levels from the CFS Reanalysis'
-                nc_fid.createDimension('time', 0)
-                nc_fid.createDimension('level', len(self.level_coord))
-                nc_fid.createDimension('lat', self._ny)
-                nc_fid.createDimension('lon', self._nx)
+                    print('PID %s: Omitting file %s; exists' % (pid, nc_file_name))
+                return
+            if write_into_existing:
+                nc_file_open_type = 'a'
+                init_coord = False
+            else:
+                os.remove(nc_file_name)
+        nc_file_id = nc.Dataset(nc_file_name, nc_file_open_type, format='NETCDF4')
 
-                # Create unlimited time variable for initialization time
-                nc_var = nc_fid.createVariable('time', np.float32, 'time', zlib=True)
-                time_units = 'hours since 1970-01-01 00:00:00'
+        # Initialize coordinates, if needed
+        time_axis = pd.DatetimeIndex(start=unique_months[m].start_time, end=unique_months[m].end_time,
+                                     freq='6H').to_pydatetime()
+        if init_coord:
+            # Create dimensions
+            if verbose:
+                print('PID %s: Creating coordinate dimensions' % pid)
+            nc_file_id.description = 'Selected variables and levels from the CFS Reanalysis'
+            nc_file_id.createDimension('time', 0)
+            nc_file_id.createDimension('level', len(self.level_coord))
+            nc_file_id.createDimension('lat', self._ny)
+            nc_file_id.createDimension('lon', self._nx)
 
-                nc_var.setncatts({
-                    'long_name': 'Model initialization time',
-                    'units': time_units
-                })
-                nc_fid.variables['time'][:] = nc.date2num(time_axis, time_units)
+            # Create unlimited time variable for initialization time
+            nc_var = nc_file_id.createVariable('time', np.float32, 'time', zlib=True)
+            time_units = 'hours since 1970-01-01 00:00:00'
 
-                # Create unchanging level variable
-                nc_var = nc_fid.createVariable('level', np.float32, 'level', zlib=True)
-                nc_var.setncatts({
-                    'long_name': 'Pressure level',
-                    'units': 'hPa'
-                })
-                nc_fid.variables['level'][:] = self.level_coord
+            nc_var.setncatts({
+                'long_name': 'Model initialization time',
+                'units': time_units
+            })
+            nc_file_id.variables['time'][:] = nc.date2num(time_axis, time_units)
 
-            # Now go through the time files to add data to the netCDF file
-            for dt in month:
-                grib_file_dir = datetime.strftime(dt, grib_dir_format)
-                grib_file_name = datetime.strftime(dt, grib_file_format.format(self._resolution, self._run_type))
-                grib_file_name = '%s/%s/%s' % (self._root_directory, grib_file_dir, grib_file_name)
-                # Write the latitude and longitude coordinate arrays, if needed
-                if init_coord:
-                    try:
-                        read_write_grib_lat_lon(grib_file_name)
-                        init_coord = False
-                    except (IOError, OSError):
-                        print("* Warning: file %s not found for coordinates; trying the next one." % grib_file_name)
-                read_write_grib(grib_file_name, list(time_axis).index(dt))
+            # Create unchanging level variable
+            nc_var = nc_file_id.createVariable('level', np.float32, 'level', zlib=True)
+            nc_var.setncatts({
+                'long_name': 'Pressure level',
+                'units': 'hPa'
+            })
+            nc_file_id.variables['level'][:] = self.level_coord
 
-                # Delete files if requested
-                if delete_raw_files:
-                    if os.path.isfile(grib_file_name):
-                        os.remove(grib_file_name)
+        # Now go through the time files to add data to the netCDF file
+        for dt in month:
+            grib_file_dir = datetime.strftime(dt, grib_dir_format)
+            grib_file_name = datetime.strftime(dt, grib_file_format.format(self._resolution, self._run_type))
+            grib_file_name = '%s/%s/%s' % (self._root_directory, grib_file_dir, grib_file_name)
+            # Write the latitude and longitude coordinate arrays, if needed
+            if init_coord:
+                try:
+                    read_write_grib_lat_lon(grib_file_name, nc_file_id)
+                    init_coord = False
+                except (IOError, OSError):
+                    print("* Warning: file %s not found for coordinates; trying the next one." % grib_file_name)
+            read_write_grib(grib_file_name, list(time_axis).index(dt), nc_file_id)
 
-            nc_fid.close()
+            # Delete files if requested
+            if delete_raw_files:
+                if os.path.isfile(grib_file_name):
+                    os.remove(grib_file_name)
+
+        nc_file_id.close()
 
     def open(self, exact_dates=True, concat_dim='time', **dataset_kwargs):
         """
@@ -681,7 +748,7 @@ class CFSReforecast(object):
             raise ValueError('no latitude/longitude points within 1 degree of requested lat/lon!')
         return np.unravel_index(np.argmin(distance, axis=None), distance.shape)
 
-    def retrieve(self, dates, variables='all', verbose=False):
+    def retrieve(self, dates, variables='all', n_proc=4, verbose=False):
         """
         Retrieves CFS reanalysis data for the given datetimes, and writes them to the local directory. The same
         directory structure (%Y/%Y%m/%Y%m%d/file_name) is used locally as on the server. Creates subdirectories if
@@ -690,6 +757,8 @@ class CFSReforecast(object):
         :param dates: list or tuple: date or datetime objects of of analysis times. May be 'all', in which case
             all dates in the object's 'dataset_dates' attributes are retrieved.
         :param variables: list: list of variables to retrieve or 'all'
+        :param n_proc: int: if >1, fetches files in parallel. This speeds up performance but may not scale well if
+            internet I/O is the bottleneck. Set to 0 to use all available threads.
         :param verbose: bool: include progress print statements
         :return: None
         """
@@ -730,32 +799,51 @@ class CFSReforecast(object):
                 if grib_file_name not in self.raw_files:
                     self.raw_files.append(grib_file_name)
 
-        # Retrieve the files
-        for file in self.raw_files:
-            local_file = '%s/%s' % (self._root_directory, file)
-            if _check_exists(local_file):
-                if verbose:
-                    print('local file %s exists; omitting' % local_file)
-                continue
-            remote_file = '%s/%s' % (self._root_url, file)
+        if n_proc == 0 or n_proc > 1:
+            try:
+                import multiprocessing
+                if n_proc == 0:
+                    n_proc = multiprocessing.cpu_count()
+            except ImportError:
+                warnings.warn("'multiprocessing' module not available; falling back to serial")
+                n_proc = 1
+
+        if n_proc == 1:
+            for file in self.raw_files:
+                call_fetch((self, file, verbose))
+        else:
+            pool = multiprocessing.Pool(processes=n_proc)
+            pool.map(call_fetch, zip(it.repeat(self), self.raw_files, it.repeat(verbose)))
+            pool.close()
+            pool.terminate()
+            pool.join()
+
+    def _fetch(self, f, verbose):
+        pid = os.getpid()
+        local_file = '%s/%s' % (self._root_directory, f)
+        if _check_exists(local_file):
             if verbose:
-                print('downloading %s' % remote_file)
+                print('PID %s: local file %s exists; omitting' % (pid, local_file))
+            return
+        remote_file = '%s/%s' % (self._root_url, f)
+        if verbose:
+            print('PID %s: downloading %s' % (pid, remote_file))
+        try:
+            response = urlopen(remote_file)
+            with open(local_file, 'wb') as fd:
+                fd.write(response.read())
+        except BaseException as e:
+            print('warning: failed to download %s, retrying' % remote_file)
             try:
                 response = urlopen(remote_file)
                 with open(local_file, 'wb') as fd:
                     fd.write(response.read())
             except BaseException as e:
-                print('warning: failed to download %s, retrying' % remote_file)
-                try:
-                    response = urlopen(remote_file)
-                    with open(local_file, 'wb') as fd:
-                        fd.write(response.read())
-                except BaseException as e:
-                    print('warning: failed to download %s' % remote_file)
-                    print('* Reason: "%s"' % str(e))
+                print('warning: failed to download %s' % remote_file)
+                print('* Reason: "%s"' % str(e))
 
     def write(self, variables='all', dates='all', forecast_hours=1080, interpolate=None, write_into_existing=True,
-              omit_existing=False, delete_raw_files=False, verbose=False):
+              omit_existing=False, delete_raw_files=False, n_proc=4, verbose=False):
         """
         Reads raw CFS reanalysis files for the given dates (list or tuple form) and specified variables and levels and
         writes the data to reformatted netCDF files. Processed files are saved under self._root_directory/processed;
@@ -775,6 +863,8 @@ class CFSReforecast(object):
             are known to be complete.
         :param delete_raw_files: bool: if True, deletes the original data files from which the processed versions were
             made
+        :param n_proc: int: if >1, runs write tasks in parallel, one per month of data. This speeds up performance but
+            may not scale well if disk I/O is the bottleneck. Set to 0 to use all available threads.
         :param verbose: bool: include progress print statements
         :return:
         """
@@ -796,7 +886,6 @@ class CFSReforecast(object):
         if forecast_hours < self._dt:
             raise ValueError('maximum forecast_hours should be at least %d' % self._dt)
         self.f_hour = np.array(np.arange(self._dt, forecast_hours + 1, self._dt), dtype='int')
-        n_fhour = len(self.f_hour)
         if interpolate is not None:
             if len(interpolate) != 2:
                 raise ValueError("'interpolate' must be a tuple of length 2")
@@ -807,6 +896,39 @@ class CFSReforecast(object):
             self._ny = len(interpolate[0])
             self._nx = len(interpolate[1])
 
+        # Generate monthly batches of dates
+        dates_index = pd.DatetimeIndex(dates).sort_values()
+        months = dates_index.to_period('M')
+        unique_months = months.unique()
+        month_list = []
+        for m in range(len(unique_months)):
+            month_list.append(list(dates_index[months == unique_months[m]].to_pydatetime()))
+
+        if n_proc == 0 or n_proc > 1:
+            try:
+                import multiprocessing
+                if n_proc == 0:
+                    n_proc = multiprocessing.cpu_count()
+            except ImportError:
+                warnings.warn("'multiprocessing' module not available; falling back to serial")
+                n_proc = 1
+
+        if n_proc == 1:
+            for nm, month in enumerate(month_list):
+                call_process_month((self, nm, month, unique_months, variables, interpolate, write_into_existing,
+                                    omit_existing, delete_raw_files, verbose))
+        else:
+            pool = multiprocessing.Pool(processes=n_proc)
+            pool.map(call_process_month, zip(it.repeat(self), range(len(month_list)), month_list,
+                                             it.repeat(unique_months), it.repeat(variables), it.repeat(interpolate),
+                                             it.repeat(write_into_existing), it.repeat(omit_existing),
+                                             it.repeat(delete_raw_files), it.repeat(verbose)))
+            pool.close()
+            pool.terminate()
+            pool.join()
+
+    def _process_month(self, m, month, unique_months, variables, interpolate, write_into_existing, omit_existing,
+                       delete_raw_files, verbose):
         def read_grib_lat_lon(file_name):
             exists, exists_file_name = _check_exists(file_name, path=True)
             if not exists:
@@ -824,10 +946,10 @@ class CFSReforecast(object):
             grib_data.close()
             return lat, lon
 
-        def read_write_grib_lat_lon(file_name):
+        def read_write_grib_lat_lon(file_name, nc_fid):
             lat, lon = read_grib_lat_lon(file_name)
             if verbose:
-                print('Writing latitude and longitude')
+                print('PID %s: Writing latitude and longitude' % pid)
             nc_var = nc_fid.createVariable('lat', np.float32, ('lat',))
             nc_var.setncatts({
                 'long_name': 'Latitude',
@@ -841,18 +963,16 @@ class CFSReforecast(object):
             })
             nc_fid.variables['lon'][:] = lon
 
-        def read_write_grib(file_name, time_index):
+        def read_write_grib(file_name, time_index, variable):
             exists, exists_file_name = _check_exists(file_name, path=True)
             if not exists:
                 print('* Warning: file %s not found' % file_name)
                 return
             if verbose:
-                print('Loading %s' % exists_file_name)
-            if verbose:
-                print('  Reading')
+                print('PID %s: Reading %s' % (pid, exists_file_name))
             grib_data = pygrib.open(file_name)
             for grb in grib_data:
-                if grb.forecastTime > forecast_hours:
+                if grb.forecastTime > np.max(self.f_hour):
                     break
                 try:
                     f_hour_ind = list(self.f_hour).index(int(grb.forecastTime))
@@ -860,16 +980,16 @@ class CFSReforecast(object):
                     continue
                 try:
                     if verbose:
-                        print('Writing forecast hour %d' % self.f_hour[f_hour_ind])
+                        print('PID %s: Writing forecast hour %d' % (pid, self.f_hour[f_hour_ind]))
                     data = np.array(grb.values, dtype=np.float32)
                     if interpolate is not None:
                         f_interp = RectBivariateSpline(data_lat, data_lon, data)
                         if self.inverse_lat:
-                            var_to_write[f_hour_ind, time_index, ...] = f_interp(interpolate[0][::-1], interpolate[1])
+                            variable[f_hour_ind, time_index, ...] = f_interp(interpolate[0][::-1], interpolate[1])
                         else:
-                            var_to_write[f_hour_ind, time_index, ...] = f_interp(interpolate[0], interpolate[1])
+                            variable[f_hour_ind, time_index, ...] = f_interp(interpolate[0], interpolate[1])
                     else:
-                        var_to_write[f_hour_ind, time_index, ...] = data
+                        variable[f_hour_ind, time_index, ...] = data
                 except OSError:  # missing index gives an OS read error
                     print('* Warning: read error')
                     pass
@@ -878,140 +998,133 @@ class CFSReforecast(object):
             grib_data.close()
             return
 
-        # Generate monthly batches of dates
-        dates_index = pd.DatetimeIndex(dates).sort_values()
-        months = dates_index.to_period('M')
-        unique_months = months.unique()
-        month_list = []
-        for m in range(len(unique_months)):
-            month_list.append(list(dates_index[months == unique_months[m]].to_pydatetime()))
-
         # We're gonna have to do this the ugly way, with the netCDF4 module.
         # Iterate over months, create a netCDF file for the month, and fill in all datetimes we want
-        for m, month in enumerate(month_list):
-            # Create netCDF file, or append
-            nc_file_dir = '%s/processed' % self._root_directory
-            os.makedirs(nc_file_dir, exist_ok=True)
-            nc_file_name = '%s/%sfcst_%s.nc' % (nc_file_dir, self._file_id, datetime.strftime(month[0], '%Y%m'))
-            if verbose:
-                print('Writing to file %s' % nc_file_name)
-            nc_file_open_type = 'w'
-            init_coord = True
-            if os.path.isfile(nc_file_name):
-                if omit_existing:
-                    if verbose:
-                        print('Omitting file %s; exists' % nc_file_name)
-                    continue
-                if write_into_existing:
-                    nc_file_open_type = 'a'
-                    init_coord = False
-                else:
-                    os.remove(nc_file_name)
-            nc_fid = nc.Dataset(nc_file_name, nc_file_open_type, format='NETCDF4')
-
-            # Initialize coordinates
-            time_axis = pd.DatetimeIndex(start=unique_months[m].start_time, end=unique_months[m].end_time,
-                                         freq='6H').to_pydatetime()
-            if init_coord:
-                # Create dimensions
+        # Create netCDF file, or append
+        pid = os.getpid()
+        n_fhour = len(self.f_hour)
+        nc_file_dir = '%s/processed' % self._root_directory
+        os.makedirs(nc_file_dir, exist_ok=True)
+        nc_file_name = '%s/%sfcst_%s.nc' % (nc_file_dir, self._file_id, datetime.strftime(month[0], '%Y%m'))
+        if verbose:
+            print('PID %s: Writing to file %s' % (pid, nc_file_name))
+        nc_file_open_type = 'w'
+        init_coord = True
+        if os.path.isfile(nc_file_name):
+            if omit_existing:
                 if verbose:
-                    print('Creating coordinate dimensions')
-                nc_fid.description = 'Selected variables and levels from the CFS Reanalysis'
-                nc_fid.createDimension('f_hour', n_fhour)
-                nc_fid.createDimension('time', 0)
-                nc_fid.createDimension('lat', self._ny)
-                nc_fid.createDimension('lon', self._nx)
+                    print('PID %s: Omitting file %s; exists' % (pid, nc_file_name))
+                return
+            if write_into_existing:
+                nc_file_open_type = 'a'
+                init_coord = False
+            else:
+                os.remove(nc_file_name)
+        nc_file_id = nc.Dataset(nc_file_name, nc_file_open_type, format='NETCDF4')
 
-                # Create forecast hour variable
-                nc_var = nc_fid.createVariable('f_hour', np.int, 'f_hour')
-                nc_var.setncatts({
-                    'long_name': 'Forecast hour'
+        # Initialize coordinates
+        time_axis = pd.DatetimeIndex(start=unique_months[m].start_time, end=unique_months[m].end_time,
+                                     freq='6H').to_pydatetime()
+        if init_coord:
+            # Create dimensions
+            if verbose:
+                print('PID %s: Creating coordinate dimensions' % pid)
+            nc_file_id.description = 'Selected variables and levels from the CFS Reanalysis'
+            nc_file_id.createDimension('f_hour', n_fhour)
+            nc_file_id.createDimension('time', 0)
+            nc_file_id.createDimension('lat', self._ny)
+            nc_file_id.createDimension('lon', self._nx)
+
+            # Create forecast hour variable
+            nc_var = nc_file_id.createVariable('f_hour', np.int, 'f_hour')
+            nc_var.setncatts({
+                'long_name': 'Forecast hour'
+            })
+            nc_file_id.variables['f_hour'][:] = self.f_hour
+
+            # Create unlimited time variable for initialization time
+            nc_var = nc_file_id.createVariable('time', np.float32, 'time')
+            time_units = 'hours since 1970-01-01 00:00:00'
+
+            nc_var.setncatts({
+                'long_name': 'Model initialization time',
+                'units': time_units
+            })
+            nc_file_id.variables['time'][:] = nc.date2num(time_axis, time_units)
+
+        # Now go through the time files to add data to the netCDF file
+        for var in variables:
+            if var not in nc_file_id.variables.keys():
+                if verbose:
+                    print('PID %s: Creating variable %s' % (pid, var))
+                var_to_write = nc_file_id.createVariable(var, np.float32, ('f_hour', 'time', 'lat', 'lon'), zlib=True)
+                var_to_write.setncatts({
+                    'long_name': var,
+                    'units': 'N/A',
+                    '_FillValue': fill_value
                 })
-                nc_fid.variables['f_hour'][:] = self.f_hour
-
-                # Create unlimited time variable for initialization time
-                nc_var = nc_fid.createVariable('time', np.float32, 'time')
-                time_units = 'hours since 1970-01-01 00:00:00'
-
-                nc_var.setncatts({
-                    'long_name': 'Model initialization time',
-                    'units': time_units
-                })
-                nc_fid.variables['time'][:] = nc.date2num(time_axis, time_units)
-
-            # Now go through the time files to add data to the netCDF file
-            for var in variables:
-                if var not in nc_fid.variables.keys():
-                    if verbose:
-                        print('Creating variable %s' % var)
-                    var_to_write = nc_fid.createVariable(var, np.float32, ('f_hour', 'time', 'lat', 'lon'), zlib=True)
-                    var_to_write.setncatts({
-                        'long_name': var,
-                        'units': 'N/A',
-                        '_FillValue': fill_value
-                    })
+            else:
+                var_to_write = nc_file_id.variables[var]
+            for dt in month:
+                # File name
+                grib_file_dir = datetime.strftime(dt, reforecast_dir_format).format(var)
+                if dt.hour == 0:
+                    # 1st of the month 4 months later
+                    end_date = datetime.strftime((dt.replace(day=1) + timedelta(days=130)).replace(day=1),
+                                                 '%Y%m%d%H')
                 else:
-                    var_to_write = nc_fid.variables[var]
-                for dt in month:
-                    # File name
-                    grib_file_dir = datetime.strftime(dt, reforecast_dir_format).format(var)
-                    if dt.hour == 0:
-                        # 1st of the month 4 months later
-                        end_date = datetime.strftime((dt.replace(day=1) + timedelta(days=130)).replace(day=1),
-                                                     '%Y%m%d%H')
-                    else:
-                        end_date = datetime.strftime(dt + timedelta(days=45), '%Y%m%d%H')
-                    start_date = datetime.strftime(dt, '%Y%m%d%H')
-                    grib_file_name = '%s/%s/%s' % (self._root_directory, grib_file_dir,
-                                                   reforecast_file_format.format(var, start_date, end_date, start_date))
+                    end_date = datetime.strftime(dt + timedelta(days=45), '%Y%m%d%H')
+                start_date = datetime.strftime(dt, '%Y%m%d%H')
+                grib_file_name = '%s/%s/%s' % (self._root_directory, grib_file_dir,
+                                               reforecast_file_format.format(var, start_date, end_date, start_date))
 
-                    # Write the latitude and longitude coordinate arrays, if needed
-                    if init_coord:
-                        if interpolate is None:
-                            try:
-                                read_write_grib_lat_lon(grib_file_name)
-                                init_coord = False
-                            except (IOError, OSError):
-                                print("* Warning: file %s not found for coordinates; trying the next one."
-                                      % grib_file_name)
-                        else:
-                            if verbose:
-                                print('Writing latitude and longitude')
-                            nc_var = nc_fid.createVariable('lat', np.float32, ('lat',))
-                            nc_var.setncatts({
-                                'long_name': 'Latitude',
-                                'units': 'degrees_north'
-                            })
-                            nc_fid.variables['lat'][:] = interpolate[0]
-                            nc_var = nc_fid.createVariable('lon', np.float32, ('lon',))
-                            nc_var.setncatts({
-                                'long_name': 'Longitude',
-                                'units': 'degrees_east'
-                            })
-                            nc_fid.variables['lon'][:] = interpolate[1]
-                            init_coord = False
-
-                    # Get the data lat/lon if we need to interpolate
-                    if interpolate is not None:
+                # Write the latitude and longitude coordinate arrays, if needed
+                if init_coord:
+                    if interpolate is None:
                         try:
-                            data_lat, data_lon = read_grib_lat_lon(grib_file_name)
-                            if self.inverse_lat:
-                                data_lat = data_lat[::-1]
+                            read_write_grib_lat_lon(grib_file_name, nc_file_id)
+                            init_coord = False
                         except (IOError, OSError):
-                            print("* Warning: could not get coordinates from file %s but I need coordinates to "
-                                  "interpolate. I'm skipping to the next one!"
+                            print("* Warning: file %s not found for coordinates; trying the next one."
                                   % grib_file_name)
-                            continue
+                    else:
+                        if verbose:
+                            print('PID %s: Writing latitude and longitude' % pid)
+                        nc_var = nc_file_id.createVariable('lat', np.float32, ('lat',))
+                        nc_var.setncatts({
+                            'long_name': 'Latitude',
+                            'units': 'degrees_north'
+                        })
+                        nc_file_id.variables['lat'][:] = interpolate[0]
+                        nc_var = nc_file_id.createVariable('lon', np.float32, ('lon',))
+                        nc_var.setncatts({
+                            'long_name': 'Longitude',
+                            'units': 'degrees_east'
+                        })
+                        nc_file_id.variables['lon'][:] = interpolate[1]
+                        init_coord = False
 
-                    # Write the data
-                    read_write_grib(grib_file_name, list(time_axis).index(dt))
+                # Get the data lat/lon if we need to interpolate
+                if interpolate is not None:
+                    try:
+                        data_lat, data_lon = read_grib_lat_lon(grib_file_name)
+                        if self.inverse_lat:
+                            data_lat = data_lat[::-1]
+                    except (IOError, OSError):
+                        print("* Warning: could not get coordinates from file %s but I need coordinates to "
+                              "interpolate. I'm skipping to the next one!"
+                              % grib_file_name)
+                        continue
 
-                    # Delete files if requested
-                    if delete_raw_files:
-                        if os.path.isfile(grib_file_name):
-                            os.remove(grib_file_name)
+                # Write the data
+                read_write_grib(grib_file_name, list(time_axis).index(dt), var_to_write)
 
-            nc_fid.close()
+                # Delete files if requested
+                if delete_raw_files:
+                    if os.path.isfile(grib_file_name):
+                        os.remove(grib_file_name)
+
+        nc_file_id.close()
 
     def open(self, exact_dates=True, concat_dim='time', **dataset_kwargs):
         """

@@ -33,7 +33,7 @@ from mpl_toolkits.basemap import Basemap
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
 predictor_file = '%s/cfs_1979-2010_hgt-thick_300-500-700_NH_T2.nc' % root_directory
 
-# Names of model files, located in the root_directory, and labels for those models (don't use /)
+# Names of model files, located in the root_directory, and labels for those models
 models = [
     'dlwp_1979-2010_hgt_500_NH_T2F_FINAL',
     'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL',
@@ -72,7 +72,7 @@ validation_set = np.array(pd.date_range(start_date, end_date, freq='6H'), dtype=
 # validation_set = [d for d in validation_set if d.month in [1, 2, 12]]
 
 # Generate a verification array in memory. May use significant memory but is required if the validation set is not a
-# continuous selection from predictor dataset.
+# continuous sequence selected from the predictor dataset.
 generate_verification = True
 
 # Load a CFS Reforecast model for comparison
@@ -107,7 +107,7 @@ plot_history = False
 plot_zonal = False
 plot_mse = True
 mse_title = r'$\hat{Z}_{500}$; 2007-2009; 20-70$^{\circ}$N'
-mse_file_name = 'mse_hgt-thick_FINAL_20-70_336h.pdf'
+mse_file_name = 'mse_hgt-thick_FINAL_20-70.pdf'
 
 
 #%% Define some plotting functions
@@ -339,7 +339,7 @@ for m, model in enumerate(models):
 
 #%% Add Barotropic model
 
-if baro_ds is not None:
+if baro_ds is not None and plot_mse:
     print('Loading barotropic model data from %s...' % baro_model_file)
     if variable is None or level is None:
         raise ValueError("specific 'variable' and 'level' for Z500 must be specified to use barotropic model")
@@ -375,7 +375,7 @@ if baro_ds is not None:
 
 #%% Add the CFS model
 
-if cfs_ds is not None:
+if cfs_ds is not None and plot_mse:
     print('Loading CFS model data...')
     if variable is None or level is None:
         raise ValueError("specific 'variable' and 'level' for Z500 must be specified to use CFS model model")
@@ -411,41 +411,45 @@ if cfs_ds is not None:
 
 #%% Add persistence and climatology
 
-print('Calculating persistence forecasts...')
-if generate_verification:
-    mse.append(verify.forecast_error(np.repeat(p_series.values[None, ...], num_forecast_steps, axis=0), verif.values))
-else:
-    mse.append(verify.persistence_error(p_series.values, verif.values, num_forecast_steps))
-model_labels.append('Persistence')
+if plot_mse:
+    print('Calculating persistence forecasts...')
+    if generate_verification:
+        mse.append(verify.forecast_error(np.repeat(p_series.values[None, ...], num_forecast_steps, axis=0), verif.values))
+    else:
+        mse.append(verify.persistence_error(p_series.values, verif.values, num_forecast_steps))
+    model_labels.append('Persistence')
 
-print('Calculating climatology forecasts...')
-mse.append(verify.monthly_climo_error(processor.data['predictors'].isel(time_step=-1).sel(
-    variable=(slice(None) if variable is None else variable),
-    level=(slice(None) if level is None else level),
-    lat=((processor.data.lat >= lat_min) & (processor.data.lat <= lat_max))),
-    validation_set, n_fhour=num_forecast_steps))
-model_labels.append('Climatology')
+    print('Calculating climatology forecasts...')
+    mse.append(verify.monthly_climo_error(processor.data['predictors'].isel(time_step=-1).sel(
+        variable=(slice(None) if variable is None else variable),
+        level=(slice(None) if level is None else level),
+        lat=((processor.data.lat >= lat_min) & (processor.data.lat <= lat_max))),
+        validation_set, n_fhour=num_forecast_steps))
+    model_labels.append('Climatology')
 
 
 #%% Plot the combined MSE as a function of forecast hour for all models
 
-fig = plt.figure()
-fig.set_size_inches(6, 4)
-for m, model in enumerate(model_labels):
-    if model == 'Barotropic':
-        plt.plot(baro_forecast.f_hour, mse[m], label=model, linewidth=2.)
-    elif model == 'CFS':
-        plt.plot(cfs_forecast.f_hour, mse[m], label=model, linewidth=2.)
-    else:
-        plt.plot(f_hour, mse[m], label=model, linewidth=2.)
-plt.xlim([0, 6*num_forecast_steps])
-plt.xticks(np.arange(0, 6*num_forecast_steps+1, 12))
-plt.ylim([0, 0.2])
-plt.yticks(np.arange(0, 0.25, 0.05))
-plt.legend(loc='best')
-plt.grid(True, color='lightgray', zorder=-100)
-plt.xlabel('forecast hour')
-plt.ylabel('MSE')
-plt.title(mse_title)
-plt.savefig('%s/%s' % (plot_directory, mse_file_name), bbox_inches='tight')
-plt.show()
+if plot_mse:
+    fig = plt.figure()
+    fig.set_size_inches(6, 4)
+    for m, model in enumerate(model_labels):
+        if model == 'Barotropic':
+            plt.plot(baro_forecast.f_hour, mse[m], label=model, linewidth=2.)
+        elif model == 'CFS':
+            plt.plot(cfs_forecast.f_hour, mse[m], label=model, linewidth=2.)
+        else:
+            plt.plot(f_hour, mse[m], label=model, linewidth=2.)
+    plt.xlim([0, 6 * num_forecast_steps])
+    plt.xticks(np.arange(0, 6 * num_forecast_steps + 1, 12))
+    plt.ylim([0, 0.2])
+    plt.yticks(np.arange(0, 0.25, 0.05))
+    plt.legend(loc='best')
+    plt.grid(True, color='lightgray', zorder=-100)
+    plt.xlabel('forecast hour')
+    plt.ylabel('MSE')
+    plt.title(mse_title)
+    plt.savefig('%s/%s' % (plot_directory, mse_file_name), bbox_inches='tight')
+    plt.show()
+
+print('Done writing figures to %s' % plot_directory)

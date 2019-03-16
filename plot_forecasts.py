@@ -27,7 +27,7 @@ from mpl_toolkits.basemap import Basemap
 
 # Open the data file
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
-predictor_file = '%s/cfs_1979-2010_hgt-thick_300-500-700_NH_T2.nc' % root_directory
+predictor_file = '%s/cfs_analysis_2007-2009_hgt-thick_300-500-700_NH_T2.nc' % root_directory
 
 # Names of model files, located in the root_directory, and labels for those models (don't use /)
 models = [
@@ -54,7 +54,7 @@ predictor_sel = [
 ]
 
 # Load a barotropic model
-baro_model_file = '%s/barotropic_2007-2010.nc' % root_directory
+baro_model_file = '%s/barotropic_anal_2007-2009.nc' % root_directory
 baro_ds = xr.open_dataset(baro_model_file, cache=False)
 
 # Load the CFS model
@@ -70,6 +70,7 @@ model_dt = 6
 variable = 'HGT'
 level = 500
 scale_variables = True
+scale_factor = 0.1
 
 # Latitude / Longitude limits
 latitude_range = [20., 80.]
@@ -80,13 +81,13 @@ plot_type = 'contour'
 plot_errors = True
 plot_colormap = 'winter'
 plot_colorbars = False
-contour_range = [4800, 6000]
-contour_step = 60
-error_maxmin = 240
+contour_range = [480, 600]
+contour_step = 6
+error_maxmin = 20
 
 # Output file and other small details
 plot_directory = './Plots'
-plot_file_name = 'MAP_FINAL_24'
+plot_file_name = 'MAP_FINAL_ANAL_24'
 plot_file_type = 'pdf'
 
 
@@ -199,7 +200,7 @@ for mod, model in enumerate(models):
                                   lat=((time_series.lat >= lat_min) & (time_series.lat <= lat_max)),
                                   lon=((time_series.lon >= lon_min) & (time_series.lon <= lon_max)))
 
-    model_forecasts.append(1. * time_series)
+    model_forecasts.append(scale_factor * time_series)
 
     # Clear the model
     dlwp, time_series, p_val, t_val = None, None, None, None
@@ -215,7 +216,7 @@ if baro_ds is not None:
     baro.load()
     if not scale_variables:
         baro['Z'][:] = (baro['Z'] - z500_mean) / z500_std
-    model_forecasts.append(baro['Z'])
+    model_forecasts.append(scale_factor * baro['Z'])
     model_labels.append('Barotropic')
 
 
@@ -230,7 +231,7 @@ if cfs is not None:
     cfs_ds.load()
     if not scale_variables:
         cfs_ds['z500'][:] = (cfs_ds['z500'] - z500_mean) / z500_std
-    model_forecasts.append(cfs_ds['z500'])
+    model_forecasts.append(scale_factor * cfs_ds['z500'])
     model_labels.append('CFS')
 
 
@@ -266,4 +267,5 @@ for date in plot_dates:
     file_name_complete = '%s/%s_%s.%s' % (plot_directory, plot_file_name, datetime.strftime(date, '%Y%m%d%H'),
                                           plot_file_type)
 
-    make_plot(basemap, date, init_data, verif_data, plot_fields, model_labels, file_name=file_name_complete)
+    make_plot(basemap, date, scale_factor * init_data, scale_factor * verif_data,
+              plot_fields, model_labels, file_name=file_name_complete)
