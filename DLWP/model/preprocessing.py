@@ -13,6 +13,7 @@ import netCDF4 as nc
 import xarray as xr
 import os
 import random
+import warnings
 from datetime import datetime
 
 # netCDF fill value
@@ -61,7 +62,7 @@ class Preprocessor(object):
         return (int(np.prod(self.data.predictors.shape[1:-2])),) + self.data.predictors.shape[-2:]
 
     def data_to_samples(self, time_step=1, batch_samples=100, variables='all', levels='all', scale_variables=False,
-                        in_memory=False, chunk_size=128, overwrite=False, verbose=False):
+                        chunk_size=32, in_memory=False, to_zarr=False, overwrite=False, verbose=False):
         """
         Convert the data referenced by the data_obj in __init__ to samples ready for ingestion in a DLWP model. Write
         samples in batches of size batch_samples. The parameter scale_variables determines whether individual
@@ -74,6 +75,9 @@ class Preprocessor(object):
         :param scale_variables: bool: if True, apply de-mean and scaling on a variable/level basis
         :param chunk_size: int: size of the chunks in the sample (time) dimension)
         :param in_memory: bool: if True, speeds up operations by performing them in memory (may require lots of RAM)
+        :param to_zarr: bool: if True, writes the resulting data structure to a zarr group in addition to the netCDF
+            file. Zarr groups use efficient compression and may be significantly faster in training than netCDF files,
+            and can be read just like netCDF with xarray.
         :param overwrite: bool: if True, overwrites any existing output files, otherwise, raises an error
         :param verbose: bool: print progress statements
         :return: opens Dataset on self.data
@@ -177,7 +181,8 @@ class Preprocessor(object):
             # Create predictors and targets variables
             predictors = nc_fid.createVariable('predictors', np.float32,
                                                ('sample', 'time_step', 'variable', 'level', 'lat', 'lon'),
-                                               chunksizes=(chunk_size, time_step, n_var, n_level, n_lat, n_lon))
+                                               chunksizes=(chunk_size, time_step, n_var, n_level, n_lat, n_lon),
+                                               zlib=True)
             predictors.setncatts({
                 'long_name': 'Predictors',
                 'units': 'N/A',
@@ -185,7 +190,8 @@ class Preprocessor(object):
             })
             targets = nc_fid.createVariable('targets', np.float32,
                                             ('sample', 'time_step', 'variable', 'level', 'lat', 'lon'),
-                                            chunksizes=(chunk_size, time_step, n_var, n_level, n_lat, n_lon))
+                                            chunksizes=(chunk_size, time_step, n_var, n_level, n_lat, n_lon),
+                                            zlib=True)
             targets.setncatts({
                 'long_name': 'Targets',
                 'units': 'N/A',
@@ -285,15 +291,37 @@ class Preprocessor(object):
                 'scaling': 'True' if scale_variables else 'False'
             })
 
+        result_ds = result_ds.chunk({'sample': chunk_size})
+
+        if to_zarr:
+            zarr_file = '.'.join(self._predictor_file.split('.')[:-1]) + '.zarr'
+            if verbose:
+                print('Preprocessor.data_to_samples: writing to zarr group %s...' % zarr_file)
+            try:
+                result_ds.to_zarr(zarr_file, mode='w' if overwrite else 'w-')
+                success = True
+            except AttributeError:
+                warnings.warn("xarray version must be >= 0.12.0 (got %s) to export to zarr; falling back to netCDF"
+                              % xr.__version__)
+                success = False
+            except ValueError:
+                raise IOError('zarr group path %s exists' % zarr_file)
+            if success:
+                self._predictor_file = zarr_file
+                result_ds = xr.open_zarr(zarr_file)
+
         self.data = result_ds
 
     def open(self, **kwargs):
         """
         Open the dataset pointed to by the instance's _predictor_file attribute onto self.data
 
-        :param kwargs: passed to xarray.open_dataset()
+        :param kwargs: passed to xarray.open_dataset() or xarray.open_zarr()
         """
-        self.data = xr.open_dataset(self._predictor_file, **kwargs)
+        if self._predictor_file.endswith('.zarr'):
+            self.data = xr.open_zarr(self._predictor_file, **kwargs)
+        else:
+            self.data = xr.open_dataset(self._predictor_file, **kwargs)
 
     def close(self):
         """
@@ -313,7 +341,10 @@ class Preprocessor(object):
             raise ValueError('cannot save to file with no sample data generated or opened')
         if predictor_file is None:
             predictor_file = self._predictor_file
-        self.data.to_netcdf(predictor_file)
+        if predictor_file.endswith('.zarr'):
+            self.data.to_zarr(predictor_file)
+        else:
+            self.data.to_netcdf(predictor_file)
 
 
 def delete_nan_samples(predictors, targets, large_fill_value=False, threshold=None):

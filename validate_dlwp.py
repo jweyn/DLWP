@@ -35,32 +35,32 @@ predictor_file = '%s/cfs_1979-2010_hgt-thick_300-500-700_NH_T2.nc' % root_direct
 
 # Names of model files, located in the root_directory, and labels for those models
 models = [
-    'dlwp_1979-2010_hgt_500_NH_T2F_FINAL',
-    'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL',
+    # 'dlwp_1979-2010_hgt_500_NH_T2F_FINAL',
+    # 'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL',
     'dlwp_1979-2010_hgt_500_NH_T2F_FINAL-lstm',
-    'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm',
-    'dlwp_1979-2010_hgt_500_NH_T2F_FINAL-lstm-row',
-    'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm-row'
+    # 'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm',
+    # 'dlwp_1979-2010_hgt_500_NH_T2F_FINAL-lstm-row',
+    # 'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm-row'
 ]
 model_labels = [
-    '$Z$',
-    r'$\tau$',
+    # '$Z$',
+    # r'$\tau$',
     '$Z$ LSTM',
-    r'$\tau$ LSTM',
-    '$Z$ LSTM ROW',
-    r'$\tau$ LSTM ROW',
+    # r'$\tau$ LSTM',
+    # '$Z$ LSTM ROW',
+    # r'$\tau$ LSTM ROW',
 ]
 
 # Optional list of selections to make from the predictor dataset for each model. This is useful if, for example,
 # you want to examine models that have different numbers of vertical levels but one predictor dataset contains
 # the data that all models need.
 predictor_sel = [
+    # {'variable': ['HGT']},
+    # None,
     {'variable': ['HGT']},
-    None,
-    {'variable': ['HGT']},
-    None,
-    {'variable': ['HGT']},
-    None
+    # None,
+    # {'variable': ['HGT']},
+    # None
 ]
 
 # Validation set to use. Either an integer (number of validation samples, taken from the end), or an iterable of

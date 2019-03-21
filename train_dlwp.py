@@ -11,8 +11,9 @@ Example of training a DLWP model using a dataset of predictors generated with DL
 import time
 import numpy as np
 import pandas as pd
+import xarray as xr
 from datetime import datetime
-from DLWP.model import DLWPNeuralNet, DataGenerator, Preprocessor
+from DLWP.model import DLWPNeuralNet, DataGenerator
 from DLWP.model.preprocessing import train_test_split_ind
 from DLWP.util import save_model
 from DLWP.custom import RNNResetStates, EarlyStoppingMin, latitude_weighted_loss
@@ -20,12 +21,12 @@ from keras.regularizers import l2
 from keras.callbacks import History, TensorBoard
 
 
-#%% Open some data using the Preprocessor wrapper
+#%% Open the predictor data
 
-root_directory = '/Volumes/Lightning/DLWP'
-predictor_file = '%s/cfs_1979-2010_hgt-thick_300-500-700_NH_T2.nc' % root_directory
-model_file = '%s/dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL' % root_directory
-log_directory = '%s/logs/thick-FINAL' % root_directory
+root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
+predictor_file = '%s/cfs_analysis_1979-2010_all_20-30-50-70-85-100_G_T2.zarr' % root_directory
+model_file = '%s/dlwp_1979-2010_all_20-30-50-70-85-100_G_T2_FINAL' % root_directory
+log_directory = '%s/logs/all' % root_directory
 model_is_convolutional = True
 model_is_recurrent = False
 min_epochs = 200
@@ -34,17 +35,17 @@ patience = 50
 batch_size = 64
 lambda_ = 1.e-4
 
-processor = Preprocessor(None, predictor_file=predictor_file)
-processor.open(chunks={'sample': batch_size})
-if 'time_step' in processor.data.dims:
-    time_dim = processor.data.dims['time_step']
+data = xr.open_zarr(predictor_file)
+data = data.chunk({'sample': batch_size})
+if 'time_step' in data.dims:
+    time_dim = data.dims['time_step']
 else:
     time_dim = 1
-n_sample = processor.data.dims['sample']
+n_sample = data.dims['sample']
 
 # If system memory permits, loading the predictor data can greatly increase efficiency when training on GPUs, if the
 # train computation takes less time than the data loading.
-load_memory = True
+load_memory = False
 
 # Validation set to use. Either an integer (number of validation samples, taken from the end), or an iterable of
 # pandas datetime objects. The train set can be set to the first <integer> samples, an iterable of dates, or None to
@@ -53,7 +54,7 @@ validation_set = list(pd.date_range(datetime(2003, 1, 1, 6), datetime(2006, 12, 
 train_set = list(pd.date_range(datetime(1979, 1, 1, 6), datetime(2003, 1, 1, 0), freq='6H'))
 
 # For upsampling, we need an even number of lat/lon points. We'll crop out the north pole.
-processor.data = processor.data.isel(lat=(processor.data.lat < 90.0))
+data = data.isel(lat=(data.lat < 90.0))
 
 
 #%% Build a model and the data generators
@@ -63,25 +64,25 @@ dlwp = DLWPNeuralNet(is_convolutional=model_is_convolutional, is_recurrent=model
 
 # Find the validation set
 if isinstance(validation_set, int):
-    n_sample = processor.data.dims['sample']
+    n_sample = data.dims['sample']
     ts, val_set = train_test_split_ind(n_sample, validation_set, method='last')
     if train_set is None:
         train_set = ts
     elif isinstance(train_set, int):
         train_set = list(range(train_set))
-    validation_data = processor.data.isel(sample=val_set)
-    train_data = processor.data.isel(sample=train_set)
+    validation_data = data.isel(sample=val_set)
+    train_data = data.isel(sample=train_set)
 elif validation_set is None:
     if train_set is None:
-        train_set = processor.data.sample.values
+        train_set = data.sample.values
     validation_data = None
-    train_data = processor.data.sel(sample=train_set)
+    train_data = data.sel(sample=train_set)
 else:  # we must have a list of datetimes
     if train_set is None:
-        train_set = np.isin(processor.data.sample.values, np.array(validation_set, dtype='datetime64[ns]'),
+        train_set = np.isin(data.sample.values, np.array(validation_set, dtype='datetime64[ns]'),
                             assume_unique=True, invert=True)
-    validation_data = processor.data.sel(sample=validation_set)
-    train_data = processor.data.sel(sample=train_set)
+    validation_data = data.sel(sample=validation_set)
+    train_data = data.sel(sample=train_set)
 
 # Build the data generators
 generator = DataGenerator(dlwp, train_data, batch_size=batch_size)

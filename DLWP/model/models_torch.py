@@ -314,7 +314,7 @@ class DLWPTorchNN(object):
         else:
             return all_p
 
-    def predict_timeseries(self, predictors, time_steps, step_sequence=False, keep_time_dim=False):
+    def predict_timeseries(self, predictors, time_steps, step_sequence=False, keep_time_dim=False, verbose=0):
         """
         Make a timeseries prediction with the DLWPTorchNN model. Also performs input feature scaling. Forward predict
         time_steps number of time steps, intelligently using the time dimension to run the model time_steps/time_dim
@@ -329,6 +329,7 @@ class DLWPTorchNN(object):
             last prediction as inputs.
         :param keep_time_dim: if True, keep the time_step dimension in the output, otherwise integrates it into the
             forecast_hour (first) dimension
+        :param verbose: bool or int: print progress
         :return: ndarray: model prediction; first dim is time
         """
         time_steps = int(time_steps)
@@ -344,6 +345,8 @@ class DLWPTorchNN(object):
         else:
             feature_shape = p.shape[1:]
         for t in range(time_steps):
+            if verbose:
+                print('Time step %d/%d' % (t+1, time_steps))
             if step_sequence:
                 pr = self.predict(p)
                 pr_shape = pr.shape[:]
