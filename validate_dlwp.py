@@ -35,32 +35,32 @@ predictor_file = '%s/cfs_1979-2010_hgt-thick_300-500-700_NH_T2.nc' % root_direct
 
 # Names of model files, located in the root_directory, and labels for those models
 models = [
-    # 'dlwp_1979-2010_hgt_500_NH_T2F_FINAL',
-    # 'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL',
+    'dlwp_1979-2010_hgt_500_NH_T2F_FINAL',
+    'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL',
     'dlwp_1979-2010_hgt_500_NH_T2F_FINAL-lstm',
-    # 'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm',
-    # 'dlwp_1979-2010_hgt_500_NH_T2F_FINAL-lstm-row',
-    # 'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm-row'
+    'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm',
+    'dlwp_1979-2010_hgt_500_NH_T2F_FINAL-lstm-row',
+    'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm-row'
 ]
 model_labels = [
-    # '$Z$',
-    # r'$\tau$',
+    '$Z$',
+    r'$\tau$',
     '$Z$ LSTM',
-    # r'$\tau$ LSTM',
-    # '$Z$ LSTM ROW',
-    # r'$\tau$ LSTM ROW',
+    r'$\tau$ LSTM',
+    '$Z$ LSTM ROW',
+    r'$\tau$ LSTM ROW',
 ]
 
 # Optional list of selections to make from the predictor dataset for each model. This is useful if, for example,
 # you want to examine models that have different numbers of vertical levels but one predictor dataset contains
 # the data that all models need.
 predictor_sel = [
-    # {'variable': ['HGT']},
-    # None,
     {'variable': ['HGT']},
-    # None,
-    # {'variable': ['HGT']},
-    # None
+    None,
+    {'variable': ['HGT']},
+    None,
+    {'variable': ['HGT']},
+    None
 ]
 
 # Validation set to use. Either an integer (number of validation samples, taken from the end), or an iterable of
@@ -94,10 +94,13 @@ step_sequence = False
 # Latitude bounds for MSE calculation
 lat_range = [20., 70.]
 
-# Calculate statistics for a specific variable and level. If None, then averages all variables. Cannot be None if using
-# a barotropic model for comparison (specify Z500).
-variable = 'HGT'
-level = 500
+# Calculate statistics for a selected variable and level, or varlev if the predictor data was produced pairwise.
+# Provide as a dictionary to extract to kwargs. If  None, then averages all variables. Cannot be None if using a
+# barotropic model for comparison (specify Z500).
+selection = {
+    'variable': 'HGT',
+    'level': 500
+}
 
 # Do specific plots
 plot_directory = './Plots'
@@ -211,8 +214,7 @@ lat_max = np.max(lat_range)
 
 # Format the predictor indexer and variable index in reshaped array
 predictor_sel = predictor_sel or [None] * len(models)
-variable = variable or processor.data.variables['variable'][:]
-level = level or processor.data.variables['level'][:]
+selection = selection or {}
 
 # Lists to populate
 mse = []
@@ -299,15 +301,9 @@ for m, model in enumerate(models):
                                                  use_first_step=True, meta_ds=val_ds)
 
     # Slice the arrays as we want
-    time_series = time_series.sel(variable=(slice(None) if variable is None else variable),
-                                  level=(slice(None) if level is None else level),
-                                  lat=((time_series.lat >= lat_min) & (time_series.lat <= lat_max)))
-    p_series = p_series.sel(variable=(slice(None) if variable is None else variable),
-                            level=(slice(None) if level is None else level),
-                            lat=((p_series.lat >= lat_min) & (p_series.lat <= lat_max)))
-    verif = verif.sel(variable=(slice(None) if variable is None else variable),
-                      level=(slice(None) if level is None else level),
-                      lat=((verif.lat >= lat_min) & (verif.lat <= lat_max)))
+    time_series = time_series.sel(**selection, lat=((time_series.lat >= lat_min) & (time_series.lat <= lat_max)))
+    p_series = p_series.sel(**selection, lat=((p_series.lat >= lat_min) & (p_series.lat <= lat_max)))
+    verif = verif.sel(**selection, lat=((verif.lat >= lat_min) & (verif.lat <= lat_max)))
 
     # Calculate the MSE for each forecast hour relative to observations
     mse.append(verify.forecast_error(time_series.values, verif.values))
@@ -341,7 +337,7 @@ for m, model in enumerate(models):
 
 if baro_ds is not None and plot_mse:
     print('Loading barotropic model data from %s...' % baro_model_file)
-    if variable is None or level is None:
+    if not selection:
         raise ValueError("specific 'variable' and 'level' for Z500 must be specified to use barotropic model")
     baro_ds = baro_ds.isel(lat=((baro_ds.lat >= lat_min) & (baro_ds.lat <= lat_max)))
     if isinstance(validation_set, int):
@@ -354,13 +350,13 @@ if baro_ds is not None and plot_mse:
     baro_f = baro_forecast.variables['Z'].values
 
     # Normalize by the same std and mean as the predictor dataset
-    z500_mean = processor.data.sel(variable=variable, level=level).variables['mean'].values
-    z500_std = processor.data.sel(variable=variable, level=level).variables['std'].values
+    z500_mean = processor.data.sel(**selection).variables['mean'].values
+    z500_std = processor.data.sel(**selection).variables['std'].values
     baro_f = (baro_f - z500_mean) / z500_std
 
     if generate_verification:
         try:
-            verif = verif.sel(variable=variable, level=level)
+            verif = verif.sel(**selection)
         except ValueError:
             pass
         mse.append(verify.forecast_error(baro_f, verif.values))
@@ -377,7 +373,7 @@ if baro_ds is not None and plot_mse:
 
 if cfs_ds is not None and plot_mse:
     print('Loading CFS model data...')
-    if variable is None or level is None:
+    if not selection:
         raise ValueError("specific 'variable' and 'level' for Z500 must be specified to use CFS model model")
     cfs_ds = cfs_ds.isel(lat=((cfs_ds.lat >= lat_min) & (cfs_ds.lat <= lat_max)))
     if isinstance(validation_set, int):
@@ -390,13 +386,13 @@ if cfs_ds is not None and plot_mse:
     cfs_f = cfs_forecast.variables['z500'].values
 
     # Normalize by the same std and mean as the predictor dataset
-    z500_mean = processor.data.sel(variable=variable, level=level).variables['mean'].values
-    z500_std = processor.data.sel(variable=variable, level=level).variables['std'].values
+    z500_mean = processor.data.sel(**selection).variables['mean'].values
+    z500_std = processor.data.sel(**selection).variables['std'].values
     cfs_f = (cfs_f - z500_mean) / z500_std
 
     if generate_verification:
         try:
-            verif = verif.sel(variable=variable, level=level)
+            verif = verif.sel(**selection)
         except ValueError:
             pass
         mse.append(verify.forecast_error(cfs_f, verif.values))
@@ -421,9 +417,7 @@ if plot_mse:
 
     print('Calculating climatology forecasts...')
     mse.append(verify.monthly_climo_error(processor.data['predictors'].isel(time_step=-1).sel(
-        variable=(slice(None) if variable is None else variable),
-        level=(slice(None) if level is None else level),
-        lat=((processor.data.lat >= lat_min) & (processor.data.lat <= lat_max))),
+        **selection, lat=((processor.data.lat >= lat_min) & (processor.data.lat <= lat_max))),
         validation_set, n_fhour=num_forecast_steps))
     model_labels.append('Climatology')
 

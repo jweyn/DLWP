@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2017-18 Jonathan Weyn <jweyn@uw.edu>
+# Copyright (c) 2019 Jonathan Weyn <jweyn@uw.edu>
 #
 # See the file LICENSE for your rights.
 #
@@ -61,8 +61,9 @@ class Preprocessor(object):
         """
         return (int(np.prod(self.data.predictors.shape[1:-2])),) + self.data.predictors.shape[-2:]
 
-    def data_to_samples(self, time_step=1, batch_samples=100, variables='all', levels='all', scale_variables=False,
-                        chunk_size=32, in_memory=False, to_zarr=False, overwrite=False, verbose=False):
+    def data_to_samples(self, time_step=1, batch_samples=100, variables='all', levels='all',
+                        pairwise=False, scale_variables=False, chunk_size=32, in_memory=False, to_zarr=False,
+                        overwrite=False, verbose=False):
         """
         Convert the data referenced by the data_obj in __init__ to samples ready for ingestion in a DLWP model. Write
         samples in batches of size batch_samples. The parameter scale_variables determines whether individual
@@ -72,6 +73,8 @@ class Preprocessor(object):
         :param batch_samples: int: number of samples in the time dimension to read and process at once
         :param variables: iter: list of variables to process; may be 'all' for all variables available
         :param levels: iter: list of integer pressure levels (mb); may be 'all'
+        :param pairwise: bool: if True, creates a Dataset with one less dimension and creates a variable at each
+            variable-level pairing specified here. The lists of variables and levels must be the same length.
         :param scale_variables: bool: if True, apply de-mean and scaling on a variable/level basis
         :param chunk_size: int: size of the chunks in the sample (time) dimension)
         :param in_memory: bool: if True, speeds up operations by performing them in memory (may require lots of RAM)
@@ -104,10 +107,31 @@ class Preprocessor(object):
             levels = list(self.raw_data.Dataset.level.values)
         elif not(isinstance(levels, list) or isinstance(levels, tuple)):
             levels = [levels]
+        # If they're pairwise, make sure we have the same length
+        if pairwise:
+            if len(variables) != len(levels):
+                raise ValueError('for pairwise variable/level pairs, len(variables) must equal len(levels)')
+            var_lev = ['/'.join([v, str(l)]) for v, l in zip(variables, levels)]
+
+        # Check for variables that have no level coordinate, and enforce pairwise if necessary
+        var_no_lev = []
+        for v in variables:
+            if 'level' not in self.raw_data.Dataset[v].coords:
+                var_no_lev.append(v)
+        if not pairwise and len(var_no_lev) > 0:
+            warnings.warn("Some variables (%s) are not on pressure levels. I'm switching to pairwise mode."
+                          % var_no_lev)
+            pair_var = [v for v in variables if v not in var_no_lev] * len(levels)
+            new_levels = []
+            for l in levels:
+                new_levels = new_levels + [l] * (len(variables) - len(var_no_lev))
+            variables = pair_var + var_no_lev
+            levels = new_levels + [0] * len(var_no_lev)
+            pairwise = True
 
         # Get the exact dataset we want (index times, variables, and levels)
         all_dates = self.raw_data.dataset_dates
-        ds = self.raw_data.Dataset.sel(time=all_dates, level=levels)
+        ds = self.raw_data.Dataset.sel(time=all_dates, level=list(set(levels)))
         if verbose:
             print('Preprocessor.data_to_samples: opening and formatting raw data')
         for v in vars_available:
@@ -119,8 +143,12 @@ class Preprocessor(object):
             raise ValueError('too many time steps for time dimension')
 
         # Arrays for scaling parameters
-        means = np.zeros((n_var, n_level), dtype=np.float32)
-        stds = np.ones((n_var, n_level), dtype=np.float32)
+        if pairwise:
+            means = np.zeros((n_var,), dtype=np.float32)
+            stds = np.ones((n_var,), dtype=np.float32)
+        else:
+            means = np.zeros((n_var, n_level), dtype=np.float32)
+            stds = np.ones((n_var, n_level), dtype=np.float32)
 
         # Sort into predictors and targets. If in_memory is false, write to netCDF.
         if not in_memory:
@@ -133,19 +161,15 @@ class Preprocessor(object):
             nc_fid.setncattr('scaling', 'True' if scale_variables else 'False')
             nc_fid.createDimension('sample', 0)
             nc_fid.createDimension('time_step', time_step)
-            nc_fid.createDimension('variable', n_var)
-            nc_fid.createDimension('level', n_level)
+            if pairwise:
+                nc_fid.createDimension('varlev', n_var)
+            else:
+                nc_fid.createDimension('variable', n_var)
+                nc_fid.createDimension('level', n_level)
             nc_fid.createDimension('lat', n_lat)
             nc_fid.createDimension('lon', n_lon)
 
             # Create spatial coordinates
-            nc_var = nc_fid.createVariable('level', np.float32, 'level')
-            nc_var.setncatts({
-                'long_name': 'Pressure level',
-                'units': 'hPa'
-            })
-            nc_fid.variables['level'][:] = levels
-
             nc_var = nc_fid.createVariable('lat', np.float32, 'lat')
             nc_var.setncatts({
                 'long_name': 'Latitude',
@@ -160,11 +184,25 @@ class Preprocessor(object):
             })
             nc_fid.variables['lon'][:] = ds['lon'].values
 
-            nc_var = nc_fid.createVariable('variable', str, 'variable')
-            nc_var.setncatts({
-                'long_name': 'Variable name',
-            })
-            nc_fid.variables['variable'][:] = np.array(variables, dtype='object')
+            if pairwise:
+                nc_var = nc_fid.createVariable('varlev', str, 'varlev')
+                nc_var.setncatts({
+                    'long_name': 'Variable/level pair',
+                })
+                nc_fid.variables['varlev'][:] = np.array(var_lev, dtype='object')
+            else:
+                nc_var = nc_fid.createVariable('variable', str, 'variable')
+                nc_var.setncatts({
+                    'long_name': 'Variable name',
+                })
+                nc_fid.variables['variable'][:] = np.array(variables, dtype='object')
+
+                nc_var = nc_fid.createVariable('level', np.float32, 'level')
+                nc_var.setncatts({
+                    'long_name': 'Pressure level',
+                    'units': 'hPa'
+                })
+                nc_fid.variables['level'][:] = levels
 
             # Create initialization time reference variable
             nc_var = nc_fid.createVariable('sample', np.float32, 'sample')
@@ -179,19 +217,19 @@ class Preprocessor(object):
             nc_fid.variables['sample'][:] = nc.date2num(times, time_units)
 
             # Create predictors and targets variables
-            predictors = nc_fid.createVariable('predictors', np.float32,
-                                               ('sample', 'time_step', 'variable', 'level', 'lat', 'lon'),
-                                               chunksizes=(chunk_size, time_step, n_var, n_level, n_lat, n_lon),
-                                               zlib=True)
+            if pairwise:
+                dims = ('sample', 'time_step', 'varlev', 'lat', 'lon')
+                chunks = (chunk_size, time_step, n_var, n_lat, n_lon)
+            else:
+                dims = ('sample', 'time_step', 'variable', 'level', 'lat', 'lon')
+                chunks = (chunk_size, time_step, n_var, n_level, n_lat, n_lon)
+            predictors = nc_fid.createVariable('predictors', np.float32, dims, chunksizes=chunks, zlib=True)
             predictors.setncatts({
                 'long_name': 'Predictors',
                 'units': 'N/A',
                 '_FillValue': fill_value
             })
-            targets = nc_fid.createVariable('targets', np.float32,
-                                            ('sample', 'time_step', 'variable', 'level', 'lat', 'lon'),
-                                            chunksizes=(chunk_size, time_step, n_var, n_level, n_lat, n_lon),
-                                            zlib=True)
+            targets = nc_fid.createVariable('targets', np.float32, dims, chunksizes=chunks, zlib=True)
             targets.setncatts({
                 'long_name': 'Targets',
                 'units': 'N/A',
@@ -203,93 +241,180 @@ class Preprocessor(object):
             if verbose:
                 print('Preprocessor.data_to_samples: loading data to memory')
             ds.load()
-            predictors = np.full((n_sample, time_step, n_var, n_level, n_lat, n_lon), np.nan, dtype=np.float32)
+            if pairwise:
+                predictors = np.full((n_sample, time_step, n_var, n_lat, n_lon), np.nan, dtype=np.float32)
+            else:
+                predictors = np.full((n_sample, time_step, n_var, n_level, n_lat, n_lon), np.nan, dtype=np.float32)
             targets = predictors.copy()
 
         # Fill in the data. Go through time steps. Iterate by variable and level for scaling.
-        for v, var in enumerate(variables):
-            for l, lev in enumerate(levels):
+        if pairwise:
+            for vl, vl_name in enumerate(var_lev):
+                sel_kw = {} if (variables[vl] in var_no_lev) else {'level': levels[vl]}
                 if verbose:
-                    print('Preprocessor.data_to_samples: variable %s of %s (%s); level %s of %s (%s)' %
-                          (v+1, len(variables), var, l+1, len(levels), lev))
+                    print('Preprocessor.data_to_samples: variable/level pair %s of %s (%s)' %
+                          (vl + 1, len(var_lev), vl_name))
                 if scale_variables:
                     if verbose:
                         print('Preprocessor.data_to_samples: calculating mean and std')
-                    v_mean = mean_by_batch(ds[var].isel(level=l), batch_samples)
-                    v_std = std_by_batch(ds[var].isel(level=l), batch_samples, mean=v_mean)
-                    means[v, l] = 1. * v_mean
-                    stds[v, l] = 1. * v_std
+                    v_mean = mean_by_batch(ds[variables[vl]].sel(**sel_kw), batch_samples)
+                    v_std = std_by_batch(ds[variables[vl]].sel(**sel_kw), batch_samples, mean=v_mean)
+                    means[vl] = 1. * v_mean
+                    stds[vl] = 1. * v_std
                 else:
                     v_mean = 0.0
                     v_std = 1.0
                 for i, s in enumerate(list(range(0, n_sample, batch_samples))):
                     if verbose:
-                        print('Preprocessor.data_to_samples: writing batch %s of %s' % (i+1, n_sample//batch_samples+1))
-                    idx = slice(s, min(s+batch_samples, n_sample))
+                        print('Preprocessor.data_to_samples: writing batch %s of %s'
+                              % (i + 1, n_sample // batch_samples + 1))
+                    idx = slice(s, min(s + batch_samples, n_sample))
                     for t in range(time_step):
-                        idxp = slice(s+t, min(s+t+batch_samples, n_sample+t))
-                        idxt = slice(s+t+time_step, min(s+t+time_step+batch_samples, n_sample+t+time_step))
-                        predictors[idx, t, v, l, ...] = (ds[var].isel(time=idxp, level=l).values - v_mean) / v_std
-                        targets[idx, t, v, l, ...] = (ds[var].isel(time=idxt, level=l).values - v_mean) / v_std
+                        idxp = slice(s + t, min(s + t + batch_samples, n_sample + t))
+                        idxt = slice(s + t + time_step,
+                                     min(s + t + time_step + batch_samples, n_sample + t + time_step))
+                        predictors[idx, t, vl, ...] = (ds[variables[vl]].isel(time=idxp).sel(**sel_kw).values
+                                                       - v_mean) / v_std
+                        targets[idx, t, vl, ...] = (ds[variables[vl]].isel(time=idxt).sel(**sel_kw).values
+                                                    - v_mean) / v_std
+        else:
+            for v, var in enumerate(variables):
+                for l, lev in enumerate(levels):
+                    if verbose:
+                        print('Preprocessor.data_to_samples: variable %s of %s (%s); level %s of %s (%s)' %
+                              (v+1, len(variables), var, l+1, len(levels), lev))
+                    if scale_variables:
+                        if verbose:
+                            print('Preprocessor.data_to_samples: calculating mean and std')
+                        v_mean = mean_by_batch(ds[var].sel(level=lev), batch_samples)
+                        v_std = std_by_batch(ds[var].sel(level=lev), batch_samples, mean=v_mean)
+                        means[v, l] = 1. * v_mean
+                        stds[v, l] = 1. * v_std
+                    else:
+                        v_mean = 0.0
+                        v_std = 1.0
+                    for i, s in enumerate(list(range(0, n_sample, batch_samples))):
+                        if verbose:
+                            print('Preprocessor.data_to_samples: writing batch %s of %s'
+                                  % (i+1, n_sample//batch_samples+1))
+                        idx = slice(s, min(s+batch_samples, n_sample))
+                        for t in range(time_step):
+                            idxp = slice(s+t, min(s+t+batch_samples, n_sample+t))
+                            idxt = slice(s+t+time_step, min(s+t+time_step+batch_samples, n_sample+t+time_step))
+                            predictors[idx, t, v, l, ...] = (ds[var].isel(time=idxp, level=l).values - v_mean) / v_std
+                            targets[idx, t, v, l, ...] = (ds[var].isel(time=idxt, level=l).values - v_mean) / v_std
 
         if not in_memory:
             # Create means and stds variables
-            nc_var = nc_fid.createVariable('mean', np.float32, ('variable', 'level'))
-            nc_var.setncatts({
-                'long_name': 'Global mean of variables at levels',
-                'units': 'N/A',
-            })
-            nc_var[:] = means
+            if pairwise:
+                nc_var = nc_fid.createVariable('mean', np.float32, ('varlev',))
+                nc_var.setncatts({
+                    'long_name': 'Global mean of variables at levels',
+                    'units': 'N/A',
+                })
+                nc_var[:] = means
 
-            nc_var = nc_fid.createVariable('std', np.float32, ('variable', 'level'))
-            nc_var.setncatts({
-                'long_name': 'Global std deviation of variables at levels',
-                'units': 'N/A',
-            })
-            nc_var[:] = stds
+                nc_var = nc_fid.createVariable('std', np.float32, ('varlev',))
+                nc_var.setncatts({
+                    'long_name': 'Global std deviation of variables at levels',
+                    'units': 'N/A',
+                })
+                nc_var[:] = stds
+            else:
+                nc_var = nc_fid.createVariable('mean', np.float32, ('variable', 'level'))
+                nc_var.setncatts({
+                    'long_name': 'Global mean of variables at levels',
+                    'units': 'N/A',
+                })
+                nc_var[:] = means
+
+                nc_var = nc_fid.createVariable('std', np.float32, ('variable', 'level'))
+                nc_var.setncatts({
+                    'long_name': 'Global std deviation of variables at levels',
+                    'units': 'N/A',
+                })
+                nc_var[:] = stds
 
             # Close and re-open as xarray Dataset
             nc_fid.close()
             result_ds = xr.open_dataset(self._predictor_file)
         else:
-            result_ds = xr.Dataset({
-                'predictors': (['sample', 'time_step', 'variable', 'level', 'lat', 'lon'], predictors, {
-                    'long_name': 'Predictors',
-                    'units': 'N/A'
-                }),
-                'targets': (['sample', 'time_step', 'variable', 'level', 'lat', 'lon'], targets, {
-                    'long_name': 'Targets',
-                    'units': 'N/A'
-                }),
-                'mean': (['variable', 'level'], means, {
-                    'long_name': 'Global mean of variables at levels',
-                    'units': 'N/A',
-                }),
-                'std': (['variable', 'level'], stds, {
-                    'long_name': 'Global std deviation of variables at levels',
-                    'units': 'N/A',
+            if pairwise:
+                result_ds = xr.Dataset({
+                    'predictors': (['sample', 'time_step', 'varlev', 'lat', 'lon'], predictors, {
+                        'long_name': 'Predictors',
+                        'units': 'N/A'
+                    }),
+                    'targets': (['sample', 'time_step', 'varlev', 'lat', 'lon'], targets, {
+                        'long_name': 'Targets',
+                        'units': 'N/A'
+                    }),
+                    'mean': (['varlev'], means, {
+                        'long_name': 'Global mean of variables at levels',
+                        'units': 'N/A',
+                    }),
+                    'std': (['varlev'], stds, {
+                        'long_name': 'Global std deviation of variables at levels',
+                        'units': 'N/A',
+                    })
+                }, coords={
+                    'sample': ('sample', ds['time'].values[:n_sample], {
+                        'long_name': 'Sample start time'
+                    }),
+                    'varlev': ('varlev', var_lev),
+                    'lat': ('lat', ds['lat'].values, {
+                        'long_name': 'Latitude',
+                        'units': 'degrees_north'
+                    }),
+                    'lon': ('lon', ds['lon'].values, {
+                        'long_name': 'Longitude',
+                        'units': 'degrees_east'
+                    }),
+                }, attrs={
+                    'description': 'Training data for DLWP',
+                    'scaling': 'True' if scale_variables else 'False',
+                    'pairwise': 'True'
                 })
-            }, coords={
-                'sample': ('sample', ds['time'].values[:n_sample], {
-                    'long_name': 'Sample start time'
-                }),
-                'variable': ('variable', variables),
-                'level': ('level', levels, {
-                    'long_name': 'Pressure level',
-                    'units': 'hPa'
-                }),
-                'lat': ('lat', ds['lat'].values, {
-                    'long_name': 'Latitude',
-                    'units': 'degrees_north'
-                }),
-                'lon': ('lon', ds['lon'].values, {
-                    'long_name': 'Longitude',
-                    'units': 'degrees_east'
-                }),
-            }, attrs={
-                'description': 'Training data for DLWP',
-                'scaling': 'True' if scale_variables else 'False'
-            })
+            else:
+                result_ds = xr.Dataset({
+                    'predictors': (['sample', 'time_step', 'variable', 'level', 'lat', 'lon'], predictors, {
+                        'long_name': 'Predictors',
+                        'units': 'N/A'
+                    }),
+                    'targets': (['sample', 'time_step', 'variable', 'level', 'lat', 'lon'], targets, {
+                        'long_name': 'Targets',
+                        'units': 'N/A'
+                    }),
+                    'mean': (['variable', 'level'], means, {
+                        'long_name': 'Global mean of variables at levels',
+                        'units': 'N/A',
+                    }),
+                    'std': (['variable', 'level'], stds, {
+                        'long_name': 'Global std deviation of variables at levels',
+                        'units': 'N/A',
+                    })
+                }, coords={
+                    'sample': ('sample', ds['time'].values[:n_sample], {
+                        'long_name': 'Sample start time'
+                    }),
+                    'variable': ('variable', variables),
+                    'level': ('level', levels, {
+                        'long_name': 'Pressure level',
+                        'units': 'hPa'
+                    }),
+                    'lat': ('lat', ds['lat'].values, {
+                        'long_name': 'Latitude',
+                        'units': 'degrees_north'
+                    }),
+                    'lon': ('lon', ds['lon'].values, {
+                        'long_name': 'Longitude',
+                        'units': 'degrees_east'
+                    }),
+                }, attrs={
+                    'description': 'Training data for DLWP',
+                    'scaling': 'True' if scale_variables else 'False',
+                    'pairwise': 'False'
+                })
 
         result_ds = result_ds.chunk({'sample': chunk_size})
 

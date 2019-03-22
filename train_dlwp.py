@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from datetime import datetime
-from DLWP.model import DLWPNeuralNet, DataGenerator
+from DLWP.model import DLWPNeuralNet, DataGenerator, DataGeneratorMem
 from DLWP.model.preprocessing import train_test_split_ind
 from DLWP.util import save_model
 from DLWP.custom import RNNResetStates, EarlyStoppingMin, latitude_weighted_loss
@@ -24,18 +24,18 @@ from keras.callbacks import History, TensorBoard
 #%% Open the predictor data
 
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
-predictor_file = '%s/cfs_analysis_1979-2010_all_20-30-50-70-85-100_G_T2.zarr' % root_directory
-model_file = '%s/dlwp_1979-2010_all_20-30-50-70-85-100_G_T2_FINAL' % root_directory
-log_directory = '%s/logs/all' % root_directory
+predictor_file = '%s/cfs_1979-2010_hgt-thick_300-500-700_NH_T2.nc' % root_directory
+model_file = '%s/dlwp_mem_test' % root_directory
+log_directory = '%s/logs/mem_test' % root_directory
 model_is_convolutional = True
-model_is_recurrent = False
+model_is_recurrent = True
 min_epochs = 200
 max_epochs = 1000
 patience = 50
 batch_size = 64
 lambda_ = 1.e-4
 
-data = xr.open_zarr(predictor_file)
+data = xr.open_dataset(predictor_file)
 data = data.chunk({'sample': batch_size})
 if 'time_step' in data.dims:
     time_dim = data.dims['time_step']
@@ -85,7 +85,8 @@ else:  # we must have a list of datetimes
     train_data = data.sel(sample=train_set)
 
 # Build the data generators
-generator = DataGenerator(dlwp, train_data, batch_size=batch_size)
+print('Loading data to memory...')
+generator = DataGeneratorMem(dlwp, train_data, batch_size=batch_size)
 if validation_data is not None:
     val_generator = DataGenerator(dlwp, validation_data, batch_size=batch_size)
 
@@ -127,19 +128,19 @@ if validation_data is not None:
 cs = generator.convolution_shape
 layers = (
     # --- These layers add a convolutional LSTM at the beginning --- #
-    # ('Reshape', (generator.shape_2d,), {'input_shape': cs}),
-    # ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
-    # ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
-    # ('Reshape', ((cs[0], cs[1], cs[2] + 4, cs[3] + 4),), None),
-    # ('ConvLSTM2D', (4 * cs[1], 3), {
-    #     'dilation_rate': 2,
-    #     'padding': 'valid',
-    #     'data_format': 'channels_first',
-    #     'activation': 'tanh',
-    #     'return_sequences': True,
-    #     'kernel_regularizer': l2(lambda_)
-    # }),
-    # ('Reshape', ((4 * cs[0] * cs[1], cs[2], cs[3]),), None),
+    ('Reshape', (generator.shape_2d,), {'input_shape': cs}),
+    ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
+    ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
+    ('Reshape', ((cs[0], cs[1], cs[2] + 4, cs[3] + 4),), None),
+    ('ConvLSTM2D', (4 * cs[1], 3), {
+        'dilation_rate': 2,
+        'padding': 'valid',
+        'data_format': 'channels_first',
+        'activation': 'tanh',
+        'return_sequences': True,
+        'kernel_regularizer': l2(lambda_)
+    }),
+    ('Reshape', ((4 * cs[0] * cs[1], cs[2], cs[3]),), None),
     # -------------------------------------------------------------- #
     ('PeriodicPadding2D', ((0, 2),), {
         'data_format': 'channels_first',
@@ -196,12 +197,12 @@ layers = (
     ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
     ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
     # --- Change the number of filters to cs[0] * cs[1] for LSTM model --- #
-    ('Conv2D', (cs[0], 5), {  # cs[0] * cs[1]
+    ('Conv2D', (cs[0] * cs[1], 5), {  # cs[0] * cs[1]
         'padding': 'valid',
         'activation': 'linear',
         'data_format': 'channels_first'
     }),
-    # ('Reshape', (generator.convolution_shape,), None)
+    ('Reshape', (generator.convolution_shape,), None)
 )
 
 # # Feed-forward dense neural network
@@ -220,7 +221,7 @@ layers = (
 #                                        axis=-2, weighting='midlatitude')
 
 # Build the model
-dlwp.build_model(layers, loss='mse', optimizer='adam', metrics=['mae'])
+dlwp.build_model(layers, loss='mse', optimizer='adam', metrics=['mae'], gpus=2)
 print(dlwp.model.summary())
 
 
@@ -243,6 +244,7 @@ if load_memory:
 if validation_data is None:
     val = None
 else:
+    print('Loading validation data to memory...')
     val = val_generator.generate([], scale_and_impute=False)
 
 
@@ -250,6 +252,7 @@ else:
 
 # Train and evaluate the model
 start_time = time.time()
+print('Begin training...')
 history = History()
 early = EarlyStoppingMin(min_epochs=min_epochs, monitor='val_loss', min_delta=0., patience=patience,
                          restore_best_weights=True, verbose=1)

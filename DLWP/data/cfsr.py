@@ -421,12 +421,16 @@ class CFSReanalysis(object):
             grib_data = pygrib.open(file_name)
             # Have to do this the hard way, because grib_index doesn't work on these 'multi-field' files
             grib_index = []
+            grib_index_no_level = []
             for grb in grib_data:
                 try:
                     grib_index.append([int(grb.discipline), int(grb.parameterCategory),
                                        int(grb.parameterNumber), int(grb.level)])
+                    grib_index_no_level.append([int(grb.discipline), int(grb.parameterCategory),
+                                                int(grb.parameterNumber)])
                 except RuntimeError:
                     grib_index.append([])
+                    grib_index_no_level.append([])
             if verbose:
                 print('PID %s: Variables to fetch: %s' % (pid, variables))
             for row in range(grib2_table.shape[0]):
@@ -435,29 +439,51 @@ class CFSReanalysis(object):
                     if var not in nc_fid.variables.keys():
                         if verbose:
                             print('PID %s: Creating variable %s' % (pid, var))
-                        nc_var = nc_fid.createVariable(var, np.float32, ('time', 'level', 'lat', 'lon'), zlib=True)
+                        if grib2_table[row, 6] == 'isobaricInhPa':
+                            nc_var = nc_fid.createVariable(var, np.float32, ('time', 'level', 'lat', 'lon'), zlib=True)
+                        else:
+                            nc_var = nc_fid.createVariable(var, np.float32, ('time', 'lat', 'lon'), zlib=True)
                         nc_var.setncatts({
                             'long_name': grib2_table[row, 4],
                             'units': grib2_table[row, 5],
                             '_FillValue': fill_value
                         })
-                    for level_index, level in enumerate(levels):
+                    if grib2_table[row, 6] == 'isobaricInhPa':
+                        for level_index, level in enumerate(levels):
+                            try:
+                                if verbose:
+                                    print('PID %s: Writing %s at level %d' % (pid, var, level))
+                                # Match a list containing discipline, parameterCategory, parameterNumber, level.
+                                # Add one because grib indexing starts at 1.
+                                grib_key = grib_index.index([int(grib2_table[row, 1]), int(grib2_table[row, 2]),
+                                                             int(grib2_table[row, 3]), int(level)]) + 1
+                                if verbose:
+                                    print('  found %s' % grib_data[grib_key])
+                                data = np.array(grib_data[grib_key].values, dtype=np.float32)
+                                nc_fid.variables[var][time_index, level_index, ...] = data
+                            except OSError:  # missing index gives an OS read error
+                                print('* Warning: grib variable %s not found in file %s' % (var, file_name))
+                                pass
+                            except BaseException as e:
+                                print("* Warning: failed to write %s to netCDF file ('%s')" % (var, str(e)))
+                    else:
                         try:
                             if verbose:
-                                print('PID %s: Writing %s at level %d' % (pid, var, level))
+                                print('PID %s: Writing %s' % (pid, var))
                             # Match a list containing discipline, parameterCategory, parameterNumber, level.
                             # Add one because grib indexing starts at 1.
-                            grib_key = grib_index.index([int(grib2_table[row, 1]), int(grib2_table[row, 2]),
-                                                         int(grib2_table[row, 3]), int(level)]) + 1
+                            grib_key = grib_index_no_level.index([int(grib2_table[row, 1]), int(grib2_table[row, 2]),
+                                                                  int(grib2_table[row, 3])]) + 1
                             if verbose:
                                 print('  found %s' % grib_data[grib_key])
                             data = np.array(grib_data[grib_key].values, dtype=np.float32)
-                            nc_fid.variables[var][time_index, level_index, ...] = data
+                            nc_fid.variables[var][time_index, ...] = data
                         except OSError:  # missing index gives an OS read error
                             print('* Warning: grib variable %s not found in file %s' % (var, file_name))
                             pass
                         except BaseException as e:
                             print("* Warning: failed to write %s to netCDF file ('%s')" % (var, str(e)))
+
             grib_data.close()
             return
 

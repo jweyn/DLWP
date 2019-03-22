@@ -1,135 +1,135 @@
-# variable,discipline,category,code,long_name,units
-TMP,0,0,0,Temperature,K
-POT,0,0,2,Potential temperature,K
-T MAX,0,0,4,Maximum temperature,K
-T MIN,0,0,5,Minimum temperature,K
-DPT,0,0,6,Dewpoint temperature,K
-LAPR,0,0,8,Lapse rate,K m-1
-LHTFL,0,0,10,Latent heat flux,W m-2
-SHTFL,0,0,11,Sensible heat flux,W m-2
-SNOHF,0,0,192,Snow phase change heat flux,W m-2
-LRGHR,0,0,195,Large scale condensate heating rate,K s-1
-CNVHR,0,0,196,Deep convective heating rate,K s-1
-THFLX,0,0,197,Total downward heat flux at surface,W m-2
-TTDIA,0,0,198,Temperature tendency by all physics,K s-1
-SHAHR,0,0,201,Shallow convective heating rate,K s-1
-VDFHR,0,0,202,Vertical diffusion heating rate,K s-1
-TCHP,0,0,204,Tropical cyclone heat potential,J m-2 K-1
-SPF H,0,1,0,Specific humidity,kg kg-1
-R H,0,1,1,Relative humidity,%
-P WAT,0,1,3,Precipitable water,kg m-2
-PRATE,0,1,7,Precipitation rate,kg m-2 s-1
-A PCP,0,1,8,Total precipitation,kg m-2
-NCPCP,0,1,9,Large scale precipitation (non-convective),kg m-2
-ACPCP,0,1,10,Convective precipitation,kg m-2
-SNO D,0,1,11,Snow depth,m
-WEASD,0,1,13,Water equivalent of accumulated snow depth,kg m-2
-CLWMR,0,1,22,Cloud water mixing ratio,kg kg-1
-CRAIN,0,1,192,Categorical rain (yes=1; no=0),
-CFRZR,0,1,193,Categorical freezing rain (yes=1; no=0),
-CICEP,0,1,194,Categorical ice pellets (yes=1; no=0),
-CSNOW,0,1,195,Categorical snow (yes=1; no=0),
-CPRAT,0,1,196,Convective precipitation rate,kg m-2 s-1
-PEVPR,0,1,200,Potential evaporation rate,W m-2
-SNOWC,0,1,201,Snow cover,%
-EMNP,0,1,211,Evaporation minus precipitation,cm day-1
-SBSNO,0,1,212,Sublimation (evaporation from snow),W m-2
-CNVMR,0,1,213,Deep convective moistening rate,kg kg-1 s-1
-SHAMR,0,1,214,Shallow convective moistening rate,kg kg-1 s-1
-VDFMR,0,1,215,Vertical diffusion moistening rate,kg kg-1 s-1
-LRGMR,0,1,217,Large scale moistening rate,kg kg-1 s-1
-QMAX,0,1,219,Maximum specific humidity at 2m,kg kg-1
-QMIN,0,1,220,Minimum specific humidity at 2m,kg kg-1
-U GRD,0,2,2,u-component of wind,m s-1
-V GRD,0,2,3,v-component of wind,m s-1
-STRM,0,2,4,Stream function,m2 s-1
-V POT,0,2,5,Velocity potential,m2 s-1
-MNTSF,0,2,6,Montgomery stream function,m2 s-1
-V VEL,0,2,8,Vertical velocity (pressure),Pa s-1
-DZDT,0,2,9,Vertical velocity (geometric),m s-1
-ABS V,0,2,10,Absolute vorticity,s-1
-PVORT,0,2,14,Potential vorticity,K m2 kg-1 s-1
-U FLX,0,2,17,Momentum flux; u-component,N m-2
-V FLX,0,2,18,Momentum flux; v-component,N m-2
-VW SH,0,2,192,Vertical speed shear,s-1
-USTM,0,2,194,u-component of storm motion,m s-1
-VSTM,0,2,195,v-component of storm motion,m s-1
-FRICV,0,2,197,Frictional velocity,m s-1
-VDFUA,0,2,208,Vertical diffusion zonal acceleration,m s-2
-VDFVA,0,2,209,Vertical diffusion meridional acceleration,m s-2
-GWDU,0,2,210,Gravity wave drag zonal acceleration,m s-2
-GWDV,0,2,211,Gravity wave drag meridional acceleration,m s-2
-CNVU,0,2,212,Convective zonal momentum mixing acceleration,m s-2
-CNVV,0,2,213,Convective meridional momentum mixing acceleration,m s-2
-CNGWDU,0,2,216,Convective gravity wave drag zonal acceleration,m s-2
-CNGWDV,0,2,217,Convective gravity wave drag meridional acceleration,m s-2
-PRES,0,3,0,Pressure,Pa
-PRMSL,0,3,1,Pressure reduced to MSL,Pa
-HGT,0,3,5,Geopotential height,gpm
-GP A,0,3,9,Geopotential height anomaly,gpm
-5WAVH,0,3,193,5-wave geopotential height,gpm
-U-GWD,0,3,194,Zonal flux of gravity wave stress,N m-2
-V-GWD,0,3,195,Meridional flux of gravity wave stress,N m-2
-HPBL,0,3,196,Planetary boundary layer height,m
-5WAVA,0,3,197,5-wave geopotential height anomaly,gpm
-DSWRF,0,4,192,Downward shortwave radiation flux,W m-2
-USWRF,0,4,193,Upward shortwave radiation flux,W m-2
-DUVB,0,4,194,UV-B downward solar flux,W m-2
-CDUVB,0,4,195,Clear sky UV-B downward solar flux,W m-2
-CSDSF,0,4,196,Clear sky downward solar flux,W m-2
-SWHR,0,4,197,Solar radiative heating rate,K s-1
-CSUSF,0,4,198,Clear sky upward solar flux,W m-2
-DLWRF,0,5,192,Downward longwave radiation flux,W m-2
-ULWRF,0,5,193,Upward longwave radiation flux,W m-2
-LWHR,0,5,194,Long-wave radiative heating rate,K s-1
-CSULF,0,5,195,Clear sky upward longwave flux,W m-2
-CSDLF,0,5,196,Clear sky downward longwave flux,W m-2
-T CDC,0,6,1,Total cloud cover,%
-C WAT,0,6,6,Cloud water,kg m-2
-CDLYR,0,6,192,Non-Convective cloud cover,%
-CWORK,0,6,193,Cloud workfunction,J kg-1
-PLI,0,7,0,Parcel lifted index (to 500 mb),deg K
-CAPE,0,7,6,Convective available potential energy,J kg-1
-CIN,0,7,7,Convective inhibition,J kg-1
-HLCY,0,7,8,Storm relative helicity,m2 s-2
-LFT X,0,7,192,Surface lifted index,deg K
-4LFTX,0,7,193,Best (4 layer) lifted index,deg K
-TOZNE,0,14,0,Total ozone,Dobson
-O3MR,0,14,192,Ozone mixing ratio,kg kg-1
-VDFOZ,0,14,195,Ozone vertical diffusion,kg kg-1 s-1
-POZ,0,14,196,Ozone production,kg kg-1 s-1
-TOZ,0,14,197,Ozone tendency,kg kg-1 s-1
-POZT,0,14,198,Ozone production from temperature term,kg kg-1 s-1
-POZO,0,14,199,Ozone production from column ozone term,kg kg-1 s-1
-ALBDO,0,19,1,Albedo,%
-SSRUN,1,0,193,Storm surface runoff,kg m-2
-LAND,2,0,0,Land cover (0=sea; 1=land),Proportion
-SFC R,2,0,1,Surface roughness,m
-SOIL M,2,0,3,Soil moisture content,kg m-2
-VEG,2,0,4,Vegetation,%
-WATR,2,0,5,Water runoff,kg m-2
-SOILW,2,0,192,Volumetric soil moisture content,
-GFLUX,2,0,193,Ground heat flux,W m-2
-SFEXC,2,0,195,Exchange coefficient,(kg m-3) (m s-1)
-CNWAT,2,0,196,Plant canopy surface water,kg m-2
-VGTYP,2,0,198,Vegetation type,
-AKHS,2,0,208,Surface exchange coefficients for T and Q divided by delta z,m s-1
-AKMS,2,0,209,Surface exchange coefficients for U and V divided by delta z,m s-1
-VEGT,2,0,210,Vegetation canopy temperature,K
-ACOND,2,0,228,Aerodynamic conductance,m s-1
-EVCW,2,0,229,Canopy water evaporation,W m-2
-TRANS,2,0,230,Transpiration,W m-2
-SOTYP,2,3,0,Soil type,
-SOILL,2,3,192,Liquid volumetric soil moisture (non-frozen),
-SLTYP,2,3,194,Surface slope type,
-EVBS,2,3,198,Direct evaporation from bare soil,W m-2
-UOGRD,10,1,2,U-component of current,m s-1
-VOGRD,10,1,3,V-component of current,m s-1
-ICEC,10,2,0,Ice cover,fraction
-ICETK,10,2,1,Ice thickness,m
-UICE,10,2,4,U-Component of ice drift,m s-1
-VICE,10,2,5,V-Component of ice drift,m s-1
-SSHG,10,3,195,Sea surface height relative to geoid,m
-SALTY,10,4,3,Salinity,kg kg-1
-DBSS,10,4,195,Geometric depth below sea surface,m
-OHC,10,4,197,Ocean heat content,J m-2
+# variable,discipline,category,code,long_name,units,level_type
+TMP,0,0,0,Temperature,K,isobaricInhPa
+POT,0,0,2,Potential temperature,K,
+T MAX,0,0,4,Maximum temperature,K,
+T MIN,0,0,5,Minimum temperature,K,
+DPT,0,0,6,Dewpoint temperature,K,
+LAPR,0,0,8,Lapse rate,K m-1,
+LHTFL,0,0,10,Latent heat flux,W m-2,
+SHTFL,0,0,11,Sensible heat flux,W m-2,
+SNOHF,0,0,192,Snow phase change heat flux,W m-2,
+LRGHR,0,0,195,Large scale condensate heating rate,K s-1,
+CNVHR,0,0,196,Deep convective heating rate,K s-1,
+THFLX,0,0,197,Total downward heat flux at surface,W m-2,
+TTDIA,0,0,198,Temperature tendency by all physics,K s-1,
+SHAHR,0,0,201,Shallow convective heating rate,K s-1,
+VDFHR,0,0,202,Vertical diffusion heating rate,K s-1,
+TCHP,0,0,204,Tropical cyclone heat potential,J m-2 K-1,
+SPF H,0,1,0,Specific humidity,kg kg-1,isobaricInhPa
+R H,0,1,1,Relative humidity,%,isobaricInhPa
+P WAT,0,1,3,Precipitable water,kg m-2,
+PRATE,0,1,7,Precipitation rate,kg m-2 s-1,
+A PCP,0,1,8,Total precipitation,kg m-2,
+NCPCP,0,1,9,Large scale precipitation (non-convective),kg m-2,
+ACPCP,0,1,10,Convective precipitation,kg m-2,
+SNO D,0,1,11,Snow depth,m,
+WEASD,0,1,13,Water equivalent of accumulated snow depth,kg m-2,
+CLWMR,0,1,22,Cloud water mixing ratio,kg kg-1,isobaricInhPa
+CRAIN,0,1,192,Categorical rain (yes=1; no=0),,
+CFRZR,0,1,193,Categorical freezing rain (yes=1; no=0),,
+CICEP,0,1,194,Categorical ice pellets (yes=1; no=0),,
+CSNOW,0,1,195,Categorical snow (yes=1; no=0),,
+CPRAT,0,1,196,Convective precipitation rate,kg m-2 s-1,
+PEVPR,0,1,200,Potential evaporation rate,W m-2,
+SNOWC,0,1,201,Snow cover,%,
+EMNP,0,1,211,Evaporation minus precipitation,cm day-1,
+SBSNO,0,1,212,Sublimation (evaporation from snow),W m-2,
+CNVMR,0,1,213,Deep convective moistening rate,kg kg-1 s-1,
+SHAMR,0,1,214,Shallow convective moistening rate,kg kg-1 s-1,
+VDFMR,0,1,215,Vertical diffusion moistening rate,kg kg-1 s-1,
+LRGMR,0,1,217,Large scale moistening rate,kg kg-1 s-1,
+QMAX,0,1,219,Maximum specific humidity at 2m,kg kg-1,
+QMIN,0,1,220,Minimum specific humidity at 2m,kg kg-1,
+U GRD,0,2,2,u-component of wind,m s-1,isobaricInhPa
+V GRD,0,2,3,v-component of wind,m s-1,isobaricInhPa
+STRM,0,2,4,Stream function,m2 s-1,isobaricInhPa
+V POT,0,2,5,Velocity potential,m2 s-1,isobaricInhPa
+MNTSF,0,2,6,Montgomery stream function,m2 s-1,
+V VEL,0,2,8,Vertical velocity (pressure),Pa s-1,isobaricInhPa
+DZDT,0,2,9,Vertical velocity (geometric),m s-1,
+ABS V,0,2,10,Absolute vorticity,s-1,isobaricInhPa
+PVORT,0,2,14,Potential vorticity,K m2 kg-1 s-1,
+U FLX,0,2,17,Momentum flux; u-component,N m-2,
+V FLX,0,2,18,Momentum flux; v-component,N m-2,
+VW SH,0,2,192,Vertical speed shear,s-1,
+USTM,0,2,194,u-component of storm motion,m s-1,
+VSTM,0,2,195,v-component of storm motion,m s-1,
+FRICV,0,2,197,Frictional velocity,m s-1,
+VDFUA,0,2,208,Vertical diffusion zonal acceleration,m s-2,
+VDFVA,0,2,209,Vertical diffusion meridional acceleration,m s-2,
+GWDU,0,2,210,Gravity wave drag zonal acceleration,m s-2,
+GWDV,0,2,211,Gravity wave drag meridional acceleration,m s-2,
+CNVU,0,2,212,Convective zonal momentum mixing acceleration,m s-2,
+CNVV,0,2,213,Convective meridional momentum mixing acceleration,m s-2,
+CNGWDU,0,2,216,Convective gravity wave drag zonal acceleration,m s-2,
+CNGWDV,0,2,217,Convective gravity wave drag meridional acceleration,m s-2,
+PRES,0,3,0,Pressure,Pa,
+PRMSL,0,3,1,Pressure reduced to MSL,Pa,
+HGT,0,3,5,Geopotential height,gpm,isobaricInhPa
+GP A,0,3,9,Geopotential height anomaly,gpm,
+5WAVH,0,3,193,5-wave geopotential height,gpm,
+U-GWD,0,3,194,Zonal flux of gravity wave stress,N m-2,
+V-GWD,0,3,195,Meridional flux of gravity wave stress,N m-2,
+HPBL,0,3,196,Planetary boundary layer height,m,
+5WAVA,0,3,197,5-wave geopotential height anomaly,gpm,
+DSWRF,0,4,192,Downward shortwave radiation flux,W m-2,
+USWRF,0,4,193,Upward shortwave radiation flux,W m-2,
+DUVB,0,4,194,UV-B downward solar flux,W m-2,
+CDUVB,0,4,195,Clear sky UV-B downward solar flux,W m-2,
+CSDSF,0,4,196,Clear sky downward solar flux,W m-2,
+SWHR,0,4,197,Solar radiative heating rate,K s-1,
+CSUSF,0,4,198,Clear sky upward solar flux,W m-2,
+DLWRF,0,5,192,Downward longwave radiation flux,W m-2,
+ULWRF,0,5,193,Upward longwave radiation flux,W m-2,
+LWHR,0,5,194,Long-wave radiative heating rate,K s-1,
+CSULF,0,5,195,Clear sky upward longwave flux,W m-2,
+CSDLF,0,5,196,Clear sky downward longwave flux,W m-2,
+T CDC,0,6,1,Total cloud cover,%,
+C WAT,0,6,6,Cloud water,kg m-2,
+CDLYR,0,6,192,Non-Convective cloud cover,%,
+CWORK,0,6,193,Cloud workfunction,J kg-1,
+PLI,0,7,0,Parcel lifted index (to 500 mb),deg K,
+CAPE,0,7,6,Convective available potential energy,J kg-1,
+CIN,0,7,7,Convective inhibition,J kg-1,
+HLCY,0,7,8,Storm relative helicity,m2 s-2,
+LFT X,0,7,192,Surface lifted index,deg K,
+4LFTX,0,7,193,Best (4 layer) lifted index,deg K,
+TOZNE,0,14,0,Total ozone,Dobson,
+O3MR,0,14,192,Ozone mixing ratio,kg kg-1,isobaricInhPa
+VDFOZ,0,14,195,Ozone vertical diffusion,kg kg-1 s-1,
+POZ,0,14,196,Ozone production,kg kg-1 s-1,
+TOZ,0,14,197,Ozone tendency,kg kg-1 s-1,
+POZT,0,14,198,Ozone production from temperature term,kg kg-1 s-1,
+POZO,0,14,199,Ozone production from column ozone term,kg kg-1 s-1,
+ALBDO,0,19,1,Albedo,%,
+SSRUN,1,0,193,Storm surface runoff,kg m-2,
+LAND,2,0,0,Land cover (0=sea; 1=land),Proportion,
+SFC R,2,0,1,Surface roughness,m,
+SOIL M,2,0,3,Soil moisture content,kg m-2,
+VEG,2,0,4,Vegetation,%,
+WATR,2,0,5,Water runoff,kg m-2,
+SOILW,2,0,192,Volumetric soil moisture content,,
+GFLUX,2,0,193,Ground heat flux,W m-2,
+SFEXC,2,0,195,Exchange coefficient,(kg m-3) (m s-1),
+CNWAT,2,0,196,Plant canopy surface water,kg m-2,
+VGTYP,2,0,198,Vegetation type,,
+AKHS,2,0,208,Surface exchange coefficients for T and Q divided by delta z,m s-1,
+AKMS,2,0,209,Surface exchange coefficients for U and V divided by delta z,m s-1,
+VEGT,2,0,210,Vegetation canopy temperature,K,
+ACOND,2,0,228,Aerodynamic conductance,m s-1,
+EVCW,2,0,229,Canopy water evaporation,W m-2,
+TRANS,2,0,230,Transpiration,W m-2,
+SOTYP,2,3,0,Soil type,,
+SOILL,2,3,192,Liquid volumetric soil moisture (non-frozen),,
+SLTYP,2,3,194,Surface slope type,,
+EVBS,2,3,198,Direct evaporation from bare soil,W m-2,
+UOGRD,10,1,2,U-component of current,m s-1,
+VOGRD,10,1,3,V-component of current,m s-1,
+ICEC,10,2,0,Ice cover,fraction,
+ICETK,10,2,1,Ice thickness,m,
+UICE,10,2,4,U-Component of ice drift,m s-1,
+VICE,10,2,5,V-Component of ice drift,m s-1,
+SSHG,10,3,195,Sea surface height relative to geoid,m,
+SALTY,10,4,3,Salinity,kg kg-1,
+DBSS,10,4,195,Geometric depth below sea surface,m,
+OHC,10,4,197,Ocean heat content,J m-2,
