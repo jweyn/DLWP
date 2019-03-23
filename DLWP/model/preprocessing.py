@@ -226,13 +226,13 @@ class Preprocessor(object):
             else:
                 dims = ('sample', 'time_step', 'variable', 'level', 'lat', 'lon')
                 chunks = (chunk_size, time_step, n_var, n_level, n_lat, n_lon)
-            predictors = nc_fid.createVariable('predictors', np.float32, dims, chunksizes=chunks, zlib=True)
+            predictors = nc_fid.createVariable('predictors', np.float32, dims, chunksizes=chunks)
             predictors.setncatts({
                 'long_name': 'Predictors',
                 'units': 'N/A',
                 '_FillValue': fill_value
             })
-            targets = nc_fid.createVariable('targets', np.float32, dims, chunksizes=chunks, zlib=True)
+            targets = nc_fid.createVariable('targets', np.float32, dims, chunksizes=chunks)
             targets.setncatts({
                 'long_name': 'Targets',
                 'units': 'N/A',
