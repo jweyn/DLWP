@@ -107,12 +107,6 @@ class Preprocessor(object):
             levels = list(self.raw_data.Dataset.level.values)
         elif not(isinstance(levels, list) or isinstance(levels, tuple)):
             levels = [levels]
-        # If they're pairwise, make sure we have the same length
-        if pairwise:
-            if len(variables) != len(levels):
-                raise ValueError('for pairwise variable/level pairs, len(variables) must equal len(levels)')
-            var_lev = ['/'.join([v, str(l)]) for v, l in zip(variables, levels)]
-
         # Check for variables that have no level coordinate, and enforce pairwise if necessary
         var_no_lev = []
         for v in variables:
@@ -128,10 +122,19 @@ class Preprocessor(object):
             variables = pair_var + var_no_lev
             levels = new_levels + [0] * len(var_no_lev)
             pairwise = True
+        # If they're pairwise, make sure we have the same length
+        if pairwise:
+            if len(variables) != len(levels):
+                raise ValueError('for pairwise variable/level pairs, len(variables) must equal len(levels)')
+            var_lev = ['/'.join([v, str(l)]) for v, l in zip(variables, levels)]
 
         # Get the exact dataset we want (index times, variables, and levels)
         all_dates = self.raw_data.dataset_dates
-        ds = self.raw_data.Dataset.sel(time=all_dates, level=list(set(levels)))
+        sel_levels = []
+        for l in levels:
+            if float(l) in self.raw_data.Dataset.level:
+                sel_levels.append(l)
+        ds = self.raw_data.Dataset.sel(time=all_dates, level=list(set(sel_levels)))
         if verbose:
             print('Preprocessor.data_to_samples: opening and formatting raw data')
         for v in vars_available:
