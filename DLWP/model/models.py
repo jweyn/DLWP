@@ -452,7 +452,7 @@ class DataGenerator(Sequence):
         return X, y
 
 
-class DataGeneratorMem(Sequence):
+class SmartDataGenerator(Sequence):
     """
     Class used to generate training data on the fly from a loaded DataSet of predictor data. Depends on the structure
     of the EnsembleSelector to do scaling and imputing of data. This particular class requires loading the dataset into
@@ -461,15 +461,16 @@ class DataGeneratorMem(Sequence):
     equals dt between time_steps.
     """
 
-    def __init__(self, model, ds, batch_size=32, shuffle=False, remove_nan=True):
+    def __init__(self, model, ds, batch_size=32, shuffle=False, remove_nan=True, load=True):
         """
-        Initialize a DataGeneratorMem.
+        Initialize a SmartDataGenerator.
 
         :param model: instance of a DLWP model
         :param ds: xarray Dataset: predictor dataset. Should have attributes 'predictors' and 'targets'
         :param batch_size: int: number of samples (days) to take at a time from the dataset
         :param shuffle: bool: if True, randomly select batches
         :param remove_nan: bool: if True, remove any samples with NaNs
+        :param load: bool: if True, load the data in memory
         """
         self.model = model
         if not hasattr(ds, 'predictors'):
@@ -498,7 +499,8 @@ class DataGeneratorMem(Sequence):
         if hasattr(self.ds, 'targets'):
             self.da = xr.concat((self.da, self.ds.targets.isel(sample=slice(self._n_sample - self.time_dim, None),
                                                                time_step=-1)), dim='sample')
-        self.da.load()
+        if load:
+            self.da.load()
         self.on_epoch_end()
 
     @property

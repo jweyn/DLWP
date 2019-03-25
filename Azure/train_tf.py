@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from datetime import datetime
-from DLWP.model import DLWPNeuralNet, DataGenerator, DataGeneratorMem
+from DLWP.model import DLWPNeuralNet, DataGenerator, SmartDataGenerator
 from DLWP.model.preprocessing import train_test_split_ind
 from DLWP.util import save_model
 from DLWP.custom import RNNResetStates, EarlyStoppingMin, latitude_weighted_loss
@@ -65,8 +65,10 @@ lambda_ = 1.e-4
 weight_loss = False
 
 # If system memory permits, loading the predictor data can greatly increase efficiency when training on GPUs, if the
-# train computation takes less time than the data loading.
+# train computation takes less time than the data loading. The option load_continuous allows a further reduction of
+# memory use by a factor of at least 2 if the train_set is a continuous time sequence of data.
 load_memory = True
+load_continuous = True
 
 # Validation set to use. Either an integer (number of validation samples, taken from the end), or an iterable of
 # pandas datetime objects. The train set can be set to the first <integer> samples, an iterable of dates, or None to
@@ -126,9 +128,10 @@ else:  # we must have a list of datetimes
     train_data = data.sel(sample=train_set)
 
 # Build the data generators
-if load_memory:
-    print('Loading data to memory...')
-    generator = DataGeneratorMem(dlwp, train_data, batch_size=batch_size)
+if load_continuous:
+    if load_memory:
+        print('Loading data to memory...')
+    generator = SmartDataGenerator(dlwp, train_data, batch_size=batch_size, load=load_memory)
 else:
     generator = DataGenerator(dlwp, train_data, batch_size=batch_size)
 if validation_data is not None:
@@ -241,7 +244,7 @@ p_fit, t_fit = generator.generate(fit_set, scale_and_impute=False)
 dlwp.init_fit(p_fit, t_fit)
 p_fit, t_fit = (None, None)
 
-if load_memory:
+if load_memory and not load_continuous:
     print('Loading data to memory...')
     p_train, t_train = generator.generate([], scale_and_impute=False)
 
@@ -260,7 +263,7 @@ history = History()
 early = EarlyStoppingMin(min_epochs=min_epochs, monitor='val_loss', min_delta=0., patience=patience,
                          restore_best_weights=True, verbose=1)
 tensorboard = TensorBoard(log_dir=log_directory, batch_size=batch_size, update_freq='epoch')
-if load_memory:
+if load_memory and not load_continuous:
     dlwp.fit(p_train, t_train, batch_size=batch_size, epochs=max_epochs, verbose=1, validation_data=val,
              callbacks=[history, RNNResetStates(), early])
 else:

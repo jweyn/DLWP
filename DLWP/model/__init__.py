@@ -10,7 +10,7 @@ Implementation of deep learning model frameworks for DLWP.
 
 import warnings
 
-from .models import DLWPNeuralNet, DataGenerator, DataGeneratorMem
+from .models import DLWPNeuralNet, DataGenerator, SmartDataGenerator
 from .preprocessing import Preprocessor
 from . import verify
 
