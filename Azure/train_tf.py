@@ -6,8 +6,13 @@
 
 """
 Example of training a DLWP model using a dataset of predictors generated with DLWP.model.Preprocessor.
+
+Uses Microsoft Azure resources. Launch this script as an Azure experiment using Azure.ipynb
 """
 
+import argparse
+import os
+import shutil
 import time
 import numpy as np
 import pandas as pd
@@ -22,31 +27,42 @@ from keras.losses import mean_squared_error
 from keras.callbacks import History, TensorBoard
 
 
-#%% Open the predictor data
+#%% Parse user arguments
 
-root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
-predictor_file = '%s/cfs_1979-2010_hgt-thick_300-500-700_NH_T2.nc' % root_directory
-model_file = '%s/dlwp_mem_test' % root_directory
-log_directory = '%s/logs/mem_test' % root_directory
-model_is_convolutional = True
-model_is_recurrent = True
+parser = argparse.ArgumentParser()
+parser.add_argument('--root-directory', type=str, dest='root_directory', default='.',
+                    help='Destination root data directory on Azure Blob storage')
+parser.add_argument('--predictor-file', type=str, dest='predictor_file',
+                    help='Path and name of data file in root-directory')
+parser.add_argument('--model-file', type=str, dest='model_file',
+                    help='Path and name of model save file in root-directory')
+parser.add_argument('--log-directory', type=str, dest='log_directory', default='./logs',
+                    help='Destination for log files in root-directory')
+parser.add_argument('--temp-dir', type=str, dest='temp_dir', default='None',
+                    help='If specified, copies the predictor file here for use during training (e.g., fast SSD)')
+
+args = parser.parse_args()
+if args.temp_dir != 'None':
+    os.makedirs(args.temp_dir, exist_ok=True)
+
+
+#%% Parameters
+
+root_directory = args.root_directory
+predictor_file = '%s/%s' % (root_directory, args.predictor_file)
+model_file = '%s/%s' % (root_directory, args.model_file)
+log_directory = '%s/%s' % (root_directory, args.log_directory)
 
 # NN parameters. Regularization is applied to LSTM layers by default. weight_loss indicates whether to weight the
 # loss function preferentially in the mid-latitudes.
+model_is_convolutional = True
+model_is_recurrent = True
 min_epochs = 200
 max_epochs = 1000
 patience = 50
 batch_size = 64
 lambda_ = 1.e-4
 weight_loss = False
-
-data = xr.open_dataset(predictor_file)
-data = data.chunk({'sample': batch_size})
-if 'time_step' in data.dims:
-    time_dim = data.dims['time_step']
-else:
-    time_dim = 1
-n_sample = data.dims['sample']
 
 # If system memory permits, loading the predictor data can greatly increase efficiency when training on GPUs, if the
 # train computation takes less time than the data loading.
@@ -57,6 +73,23 @@ load_memory = True
 # simply use the remaining points. Match the type of validation_set.
 validation_set = list(pd.date_range(datetime(2003, 1, 1, 6), datetime(2006, 12, 31, 6), freq='6H'))
 train_set = list(pd.date_range(datetime(1979, 1, 1, 6), datetime(2003, 1, 1, 0), freq='6H'))
+
+
+#%% Open data. If temporary file is specified, copy it there.
+
+if args.temp_dir != 'None':
+    new_predictor_file = '%s/%s' % (args.temp_dir, args.predictor_file)
+    print('Copying predictor file to %s...' % new_predictor_file)
+    shutil.copy(predictor_file, new_predictor_file, follow_symlinks=True)
+    data = xr.open_dataset(new_predictor_file, chunks={'sample': batch_size})
+else:
+    data = xr.open_dataset(predictor_file, chunks={'sample': batch_size})
+
+if 'time_step' in data.dims:
+    time_dim = data.dims['time_step']
+else:
+    time_dim = 1
+n_sample = data.dims['sample']
 
 # For upsampling, we need an even number of lat/lon points. We'll crop out the north pole.
 data = data.isel(lat=(data.lat < 90.0))
@@ -100,37 +133,6 @@ if validation_data is not None:
 
 
 #%% Compile the model structure with some generator data information
-
-# # Convolutional LSTM
-# layers = (
-#     ('Reshape', (generator.shape_2d,), {'input_shape': generator.convolution_shape}),
-#     ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
-#     ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
-#     ('Reshape', ((2, 1, 41, 148),), None),
-#     ('ConvLSTM2D', (16, 5), {
-#         'strides': 1,
-#         'padding': 'valid',
-#         'data_format': 'channels_first',
-#         'activation': 'tanh',
-#         'kernel_regularizer': l2(lambda_),
-#         'return_sequences': True,
-#         'input_shape': generator.convolution_shape
-#         # 'stateful': True,
-#         # 'batch_input_shape': (batch_size, 1,) + generator.convolution_shape,
-#     }),
-#     ('Reshape', ((2 * 16, 37, 144),), None),
-#     ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
-#     ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
-#     ('Conv2D', (16, 5), {
-#         'strides': 2,
-#         'padding': 'valid',
-#         'data_format': 'channels_first',
-#         'activation': 'tanh',
-#     }),
-#     ('Flatten', None, None),
-#     ('Dense', (generator.n_features,), {'activation': 'linear'}),
-#     ('Reshape', (generator.convolution_shape,), None)
-# )
 
 # Up-sampling convolutional network with LSTM layer
 cs = generator.convolution_shape
@@ -205,24 +207,13 @@ layers = (
     ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
     ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
     # --- Change the number of filters to cs[0] * cs[1] for LSTM model --- #
-    ('Conv2D', (cs[0] * cs[1], 5), {  # cs[0] * cs[1]
+    ('Conv2D', (cs[0] * cs[1], 5), {  # cs[0]
         'padding': 'valid',
         'activation': 'linear',
         'data_format': 'channels_first'
     }),
     ('Reshape', (generator.convolution_shape,), None)
 )
-
-# # Feed-forward dense neural network
-# layers = (
-#     ('Dense', (generator.n_features // 2,), {
-#         'activation': 'tanh',
-#         'kernel_regularizer': l2(lambda_),
-#         'input_shape': (generator.n_features,)
-#     }),
-#     ('Dropout', (0.25,), None),
-#     ('Dense', (generator.n_features,), {'activation': 'linear'})
-# )
 
 # Example custom loss function: pass to loss= in build_model()
 if weight_loss:
@@ -232,7 +223,7 @@ else:
     loss_function = 'mse'
 
 # Build the model
-dlwp.build_model(layers, loss=loss_function, optimizer='adam', metrics=['mae'], gpus=2)
+dlwp.build_model(layers, loss=loss_function, optimizer='adam', metrics=['mae'])
 print(dlwp.model.summary())
 
 
@@ -255,7 +246,6 @@ if load_memory:
 if validation_data is None:
     val = None
 else:
-    print('Loading validation data to memory...')
     val = val_generator.generate([], scale_and_impute=False)
 
 
@@ -263,17 +253,16 @@ else:
 
 # Train and evaluate the model
 start_time = time.time()
-print('Begin training...')
 history = History()
 early = EarlyStoppingMin(min_epochs=min_epochs, monitor='val_loss', min_delta=0., patience=patience,
                          restore_best_weights=True, verbose=1)
 tensorboard = TensorBoard(log_dir=log_directory, batch_size=batch_size, update_freq='epoch')
 if load_memory:
     dlwp.fit(p_train, t_train, batch_size=batch_size, epochs=max_epochs, verbose=1, validation_data=val,
-             callbacks=[history, RNNResetStates(), early, tensorboard])
+             callbacks=[history, RNNResetStates(), early])
 else:
     dlwp.fit_generator(generator, epochs=max_epochs, verbose=1, validation_data=val, use_multiprocessing=True,
-                       callbacks=[history, RNNResetStates(), early, tensorboard])
+                       callbacks=[history, RNNResetStates(), early])
 end_time = time.time()
 
 # Evaluate the model

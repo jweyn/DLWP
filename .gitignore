@@ -103,6 +103,11 @@ venv.bak/
 # mypy
 .mypy_cache/
 
+# Azure
+.amlignore
+aml_config/
+assets/
+
 # Added for this project
 .idea
 .idea/

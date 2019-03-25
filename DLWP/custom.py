@@ -14,7 +14,6 @@ from keras.layers.convolutional import ZeroPadding2D
 from keras.layers.local import LocallyConnected2D
 from keras.utils import conv_utils
 from keras.engine.base_layer import InputSpec
-import tensorflow as tf
 import numpy as np
 
 try:
@@ -165,19 +164,23 @@ class PeriodicPadding2D(ZeroPadding2D):
                                                 **kwargs)
 
     def call(self, inputs):
+        if K.backend() == 'plaidml.keras.backend':
+            shape = inputs.shape.dims
+        else:
+            shape = inputs.shape
         if self.data_format == 'channels_first':
-            top_slice = slice(inputs.shape[2] - self.padding[0][0], inputs.shape[2])
+            top_slice = slice(shape[2] - self.padding[0][0], shape[2])
             bottom_slice = slice(0, self.padding[0][1])
-            left_slice = slice(inputs.shape[3] - self.padding[1][0], inputs.shape[3])
+            left_slice = slice(shape[3] - self.padding[1][0], shape[3])
             right_slice = slice(0, self.padding[1][1])
             # Pad the horizontal
             outputs = K.concatenate([inputs[:, :, :, left_slice], inputs, inputs[:, :, :, right_slice]], axis=3)
             # Pad the vertical
             outputs = K.concatenate([outputs[:, :, top_slice], outputs, outputs[:, :, bottom_slice]], axis=2)
         else:
-            top_slice = slice(inputs.shape[1] - self.padding[0][0], inputs.shape[1])
+            top_slice = slice(shape[1] - self.padding[0][0], shape[1])
             bottom_slice = slice(0, self.padding[0][1])
-            left_slice = slice(inputs.shape[2] - self.padding[1][0], inputs.shape[2])
+            left_slice = slice(shape[2] - self.padding[1][0], shape[2])
             right_slice = slice(0, self.padding[1][1])
             # Pad the horizontal
             outputs = K.concatenate([inputs[:, :, left_slice], inputs, inputs[:, :, right_slice]], axis=2)
