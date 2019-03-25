@@ -49,9 +49,9 @@ if args.temp_dir != 'None':
 #%% Parameters
 
 root_directory = args.root_directory
-predictor_file = '%s/%s' % (root_directory, args.predictor_file)
-model_file = '%s/%s' % (root_directory, args.model_file)
-log_directory = '%s/%s' % (root_directory, args.log_directory)
+predictor_file = os.path.join(root_directory, args.predictor_file)
+model_file = os.path.join(root_directory, args.model_file)
+log_directory = os.path.join(root_directory, args.log_directory)
 
 # NN parameters. Regularization is applied to LSTM layers by default. weight_loss indicates whether to weight the
 # loss function preferentially in the mid-latitudes.
@@ -78,9 +78,12 @@ train_set = list(pd.date_range(datetime(1979, 1, 1, 6), datetime(2003, 1, 1, 0),
 #%% Open data. If temporary file is specified, copy it there.
 
 if args.temp_dir != 'None':
-    new_predictor_file = '%s/%s' % (args.temp_dir, args.predictor_file)
+    new_predictor_file = os.path.join(args.temp_dir, args.predictor_file)
     print('Copying predictor file to %s...' % new_predictor_file)
-    shutil.copy(predictor_file, new_predictor_file, follow_symlinks=True)
+    if os.path.isfile(new_predictor_file):
+        print('File already exists!')
+    else:
+        shutil.copy(predictor_file, new_predictor_file, follow_symlinks=True)
     data = xr.open_dataset(new_predictor_file, chunks={'sample': batch_size})
 else:
     data = xr.open_dataset(predictor_file, chunks={'sample': batch_size})

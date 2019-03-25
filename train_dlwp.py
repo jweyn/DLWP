@@ -9,6 +9,7 @@ Example of training a DLWP model using a dataset of predictors generated with DL
 """
 
 import time
+import os
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -25,9 +26,9 @@ from keras.callbacks import History, TensorBoard
 #%% Open the predictor data
 
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
-predictor_file = '%s/cfs_1979-2010_hgt-thick_300-500-700_NH_T2.nc' % root_directory
-model_file = '%s/dlwp_mem_test' % root_directory
-log_directory = '%s/logs/mem_test' % root_directory
+predictor_file = os.path.join(root_directory, 'cfs_1979-2010_hgt-thick_300-500-700_NH_T2.nc')
+model_file = os.path.join(root_directory, 'dlwp_mem_test')
+log_directory = os.path.join(root_directory, 'logs', 'mem_test')
 model_is_convolutional = True
 model_is_recurrent = True
 
