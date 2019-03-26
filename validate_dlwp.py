@@ -63,6 +63,10 @@ predictor_sel = [
     None
 ]
 
+# Models which use up-sampling need to have an even number of latitudes. This is usually done by cropping out the
+# north pole. Set this option to do that.
+crop_north_pole = True
+
 # Validation set to use. Either an integer (number of validation samples, taken from the end), or an iterable of
 # pandas datetime objects.
 # validation_set = 4 * (365 * 4 + 1)
@@ -223,12 +227,11 @@ f_hour = np.arange(6., num_forecast_steps * 6. + 1., 6.)
 # Generate verification
 if generate_verification:
     print('Generating verification...')
+    dims = [d for d in validation_data.predictors.dims if d.lower() != 'time_step']
     verification = xr.DataArray(
-        np.zeros((num_forecast_steps, validation_data.dims['sample'], validation_data.dims['variable'],
-                  validation_data.dims['level'], validation_data.dims['lat'], validation_data.dims['lon'])),
-        coords=[f_hour, validation_data.sample, validation_data.variable, validation_data.level,
-                validation_data.lat, validation_data.lon],
-        dims=['f_hour', 'sample', 'variable', 'level', 'lat', 'lon']
+        np.zeros([num_forecast_steps] + [validation_data.dims[d] for d in dims]),
+        coords=[f_hour] + [validation_data[d] for d in dims],
+        dims=['f_hour'] + dims
     )
     valid_da = processor.data.targets.isel(time_step=0)
     for d, date in enumerate(validation_set):
@@ -246,7 +249,7 @@ for m, model in enumerate(models):
     if 'weight' in model.lower():
         lats = validation_data.lat.values
         output_shape = (validation_data.dims['lat'], validation_data.dims['lon'])
-        if 'upsample' in model.lower() or 'final' in model.lower():
+        if crop_north_pole:
             lats = lats[1:]
         customs = {'loss': latitude_weighted_loss(mean_squared_error, lats, output_shape, axis=-2,
                                                   weighting='midlatitude')}
@@ -277,7 +280,7 @@ for m, model in enumerate(models):
         val_ds = validation_data.sel(**predictor_sel[m])
     else:
         val_ds = validation_data.copy()
-    if 'upsample' in model.lower() or 'final' in model.lower():
+    if crop_north_pole:
         val_ds = val_ds.isel(lat=(val_ds.lat < 90.0))
     val_generator = DataGenerator(dlwp, val_ds, batch_size=216)
     p_val, t_val = val_generator.generate([], scale_and_impute=False)
@@ -410,7 +413,8 @@ if cfs_ds is not None and plot_mse:
 if plot_mse:
     print('Calculating persistence forecasts...')
     if generate_verification:
-        mse.append(verify.forecast_error(np.repeat(p_series.values[None, ...], num_forecast_steps, axis=0), verif.values))
+        mse.append(verify.forecast_error(np.repeat(p_series.values[None, ...], num_forecast_steps, axis=0),
+                                         verif.values))
     else:
         mse.append(verify.persistence_error(p_series.values, verif.values, num_forecast_steps))
     model_labels.append('Persistence')

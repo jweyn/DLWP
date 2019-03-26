@@ -259,6 +259,7 @@ else:
 
 # Train and evaluate the model
 start_time = time.time()
+print('Begin training...')
 history = History()
 early = EarlyStoppingMin(min_epochs=min_epochs, monitor='val_loss', min_delta=0., patience=patience,
                          restore_best_weights=True, verbose=1)
