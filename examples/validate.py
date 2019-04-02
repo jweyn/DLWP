@@ -5,18 +5,17 @@
 #
 
 """
-Simple routines for evaluating the performance of a DLWP model.
+Simple routines for graphically evaluating the performance of a DLWP model.
 """
 
 from DLWP.model import DataGenerator, Preprocessor
 from DLWP.model import verify
-from DLWP.util import load_model
+from DLWP.plot import history_plot, forecast_example_plot, zonal_mean_plot
+from DLWP.util import load_model, train_test_split_ind
 from DLWP.custom import latitude_weighted_loss
-from DLWP.model.preprocessing import train_test_split_ind
 from DLWP.data import CFSReforecast
 import keras.backend as K
 from keras.losses import mean_squared_error
-import re
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -24,43 +23,39 @@ from datetime import datetime, timedelta
 import matplotlib
 matplotlib.use('agg')
 import matplotlib.pyplot as plt
-from mpl_toolkits.basemap import Basemap
 
 
 #%% User parameters
 
 # Open the data file
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
-predictor_file = '%s/cfs_1979-2010_hgt-thick_300-500-700_NH_T2.nc' % root_directory
+predictor_file = '%s/cfs_6h_1979-2010_z500-th3-7-w700-rh850-pwat_NH_T2.nc' % root_directory
 
 # Names of model files, located in the root_directory, and labels for those models
 models = [
-    'dlwp_1979-2010_hgt_500_NH_T2F_FINAL',
-    'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL',
-    'dlwp_1979-2010_hgt_500_NH_T2F_FINAL-lstm',
     'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm',
-    'dlwp_1979-2010_hgt_500_NH_T2F_FINAL-lstm-row',
-    'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm-row'
+    'dlwp_6h_1979-2010_z500-th3-7-pwat_NH_T2',
+    'dlwp_6h_1979-2010_z500-th3-7-w700-pwat_NH_T2_lstm',
+    'dlwp_6h_1979-2010_z500-th3-7-w700-rh850-pwat_NH_T2_400',
+    'dlwp_6h_1979-2010_z500-th3-7-w700-rh850_NH_T2_400'
 ]
 model_labels = [
-    '$Z$',
-    r'$\tau$',
-    '$Z$ LSTM',
     r'$\tau$ LSTM',
-    '$Z$ LSTM ROW',
-    r'$\tau$ LSTM ROW',
+    'PWAT LSTM',
+    'PWAT/W LSTM',
+    'PWAT/RH/W LSTM',
+    'RH/W LSTM'
 ]
 
 # Optional list of selections to make from the predictor dataset for each model. This is useful if, for example,
 # you want to examine models that have different numbers of vertical levels but one predictor dataset contains
 # the data that all models need.
 predictor_sel = [
-    {'variable': ['HGT']},
+    {'varlev': ['HGT/500', 'THICK/300-700']},
+    {'varlev': ['P WAT/0', 'HGT/500', 'THICK/300-700']},
+    {'varlev': ['V VEL/700', 'P WAT/0', 'HGT/500', 'THICK/300-700']},
     None,
-    {'variable': ['HGT']},
-    None,
-    {'variable': ['HGT']},
-    None
+    {'varlev': ['V VEL/700', 'HGT/500', 'THICK/300-700', 'R H/850']}
 ]
 
 # Models which use up-sampling need to have an even number of latitudes. This is usually done by cropping out the
@@ -102,8 +97,7 @@ lat_range = [20., 70.]
 # Provide as a dictionary to extract to kwargs. If  None, then averages all variables. Cannot be None if using a
 # barotropic model for comparison (specify Z500).
 selection = {
-    'variable': 'HGT',
-    'level': 500
+    'varlev': 'HGT/500'
 }
 
 # Do specific plots
@@ -114,88 +108,7 @@ plot_history = False
 plot_zonal = False
 plot_mse = True
 mse_title = r'$\hat{Z}_{500}$; 2007-2009; 20-70$^{\circ}$N'
-mse_file_name = 'mse_hgt-thick_FINAL_20-70.pdf'
-
-
-#%% Define some plotting functions
-
-def remove_chars(s):
-    return ''.join(re.split('[$/\\\\]', s))
-
-
-def history_plot(train_hist, val_hist, model_name):
-    fig = plt.figure()
-    fig.set_size_inches(6, 4)
-    plt.plot(train_hist, label='train MAE', linewidth=2)
-    plt.plot(val_hist, label='val MAE', linewidth=2)
-    plt.grid(True, color='lightgray', zorder=-100)
-    plt.xlabel('epoch')
-    plt.ylabel('MAE')
-    plt.legend(loc='best')
-    plt.title('%s training history' % model_name)
-    plt.savefig('%s/%s_history.pdf' % (plot_directory, remove_chars(model_name)), bbox_inches='tight')
-    plt.show()
-
-
-def example_plot(base, verif, forecast, model_name, plot_diff=True):
-    # Plot an example forecast
-    lons, lats = np.meshgrid(base.lon, base.lat)
-    fig = plt.figure()
-    fig.set_size_inches(9, 9)
-    m = Basemap(llcrnrlon=0., llcrnrlat=0., urcrnrlon=360., urcrnrlat=90.,
-                resolution='l', projection='cyl', lat_0=40., lon_0=0.)
-    x, y = m(lons, lats)
-    ax = plt.subplot(311)
-    if plot_diff:
-        m.contour(x, y, base, np.arange(-2.5, 1.6, 0.5), cmap='jet')
-    else:
-        m.pcolormesh(x, y, base, vmin=-2.5, vmax=1.5, cmap='YlGnBu_r')
-    m.drawcoastlines()
-    m.drawparallels(np.arange(0., 91., 45.))
-    m.drawmeridians(np.arange(0., 361., 90.))
-    ax.set_title('$t=0$ predictors (%s)' % plot_example)
-    ax = plt.subplot(312)
-    if plot_diff:
-        m.contour(x, y, verif, np.arange(-2.5, 1.6, 0.5), cmap='jet')
-    else:
-        m.pcolormesh(x, y, verif, vmin=-2.5, vmax=1.5, cmap='YlGnBu_r')
-    m.drawcoastlines()
-    m.drawparallels(np.arange(0., 91., 45.))
-    m.drawmeridians(np.arange(0., 361., 90.))
-    forecast_time = plot_example + timedelta(hours=plot_example_f_hour)
-    ax.set_title('$t=%d$ verification (%s)' % (plot_example_f_hour, forecast_time))
-    ax = plt.subplot(313)
-    if plot_diff:
-        m.contour(x, y, forecast, np.arange(-2.5, 1.6, 0.5), cmap='jet')
-        m.pcolormesh(x, y, forecast - verif, vmin=-1, vmax=1, cmap='seismic')
-    else:
-        m.pcolormesh(x, y, forecast, vmin=-2.5, vmax=1.5, cmap='YlGnBu_r')
-    # plt.colorbar(orientation='horizontal')
-    m.drawcoastlines()
-    m.drawparallels(np.arange(0., 91., 45.))
-    m.drawmeridians(np.arange(0., 361., 90.))
-    ax.set_title('$t=%d$ forecast (%s)' % (plot_example_f_hour, forecast_time))
-    plt.savefig('%s/%s_example_%d.pdf' % (plot_directory, remove_chars(model_name), plot_example_f_hour),
-                bbox_inches='tight')
-    plt.show()
-
-
-def zonal_mean_plot(obs_mean, obs_std, pred_mean, pred_std, model_name):
-    fig = plt.figure()
-    fig.set_size_inches(4, 6)
-    plt.fill_betweenx(obs_mean.lat, obs_mean - obs_std, obs_mean + obs_std,
-                      facecolor='lightgray', zorder=-100)
-    plt.plot(obs_mean, obs_mean.lat, label='observed')
-    plt.plot(pred_mean, pred_mean.lat, label='%d-hour prediction' % (6 * num_forecast_steps))
-    plt.legend(loc='best')
-    plt.grid(True, color='lightgray', zorder=-100)
-    plt.plot(pred_mean - pred_std, pred_mean.lat, 'k:', linewidth=0.7)
-    plt.plot(pred_mean + pred_std, pred_mean.lat, 'k:', linewidth=0.7)
-    plt.xlabel('zonal mean height')
-    plt.ylabel('latitude')
-    plt.ylim([0., 90.])
-    plt.savefig('%s/%s_zonal_climo.pdf' % (plot_directory, remove_chars(model_name)), bbox_inches='tight')
-    plt.show()
+mse_file_name = 'mse_pwat-hgt_20-70.pdf'
 
 
 #%% Pre-processing
@@ -297,7 +210,7 @@ for m, model in enumerate(models):
             verif = verification.sel(**predictor_sel[m])
         else:
             verif = verification.copy()
-        if 'upsample' in model.lower():
+        if crop_north_pole:
             verif = verif.isel(lat=(verif.lat < 90.0))
     else:
         verif = verify.predictors_to_time_series(t_val, time_dim, has_time_dim=dlwp.is_recurrent,
@@ -313,14 +226,16 @@ for m, model in enumerate(models):
 
     # Plot learning curves
     if plot_history:
-        history_plot(history['mean_absolute_error'], history['val_mean_absolute_error'], model_labels[m])
+        history_plot(history['mean_absolute_error'], history['val_mean_absolute_error'], model_labels[m],
+                     out_directory=plot_directory)
 
     # Plot an example
     if plot_example is not None:
         plot_dt = np.datetime64(plot_example)
-        example_plot(p_series.sel(time=plot_dt),
-                     p_series.sel(time=plot_dt + np.timedelta64(timedelta(hours=plot_example_f_hour))),
-                     time_series.sel(f_hour=plot_example_f_hour, time=plot_dt), model_labels[m])
+        forecast_example_plot(p_series.sel(time=plot_dt),
+                              p_series.sel(time=plot_dt + np.timedelta64(timedelta(hours=plot_example_f_hour))),
+                              time_series.sel(f_hour=plot_example_f_hour, time=plot_dt), f_hour=plot_example_f_hour,
+                              model_name=model_labels[m], out_directory=plot_directory)
 
     # Plot the zonal climatology of the last forecast hour
     if plot_zonal:
@@ -328,7 +243,8 @@ for m, model in enumerate(models):
         obs_zonal_std = p_series[num_forecast_steps:].std(axis=-1).mean(axis=0)
         pred_zonal_mean = time_series[-1, :-num_forecast_steps].mean(axis=(0, -1))
         pred_zonal_std = time_series[-1, :-num_forecast_steps].std(axis=-1).mean(axis=0)
-        zonal_mean_plot(obs_zonal_mean, obs_zonal_std, pred_zonal_mean, pred_zonal_std, model_labels[m])
+        zonal_mean_plot(obs_zonal_mean, obs_zonal_std, pred_zonal_mean, pred_zonal_std, 6*num_forecast_steps,
+                        model_labels[m], out_directory=plot_directory)
 
     # Clear the model
     dlwp = None

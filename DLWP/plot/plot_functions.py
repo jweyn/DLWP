@@ -5,11 +5,14 @@
 #
 
 """
-General plotting functions for all data sources.
+Collection of random plotting functions. Unfortunately these are not very robust or well-documented, but I thought it
+a bit cleaner to place them here than have plotting functions defined in every user-facing script.
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
+from matplotlib import pyplot as plt
+from mpl_toolkits.basemap import Basemap
+from .util import remove_chars
 
 
 def plot_basemap(basemap, lon, lat, z=None, plot_type='contourf', plot_kwargs=None,
@@ -124,7 +127,7 @@ def slp_contour(fig, m, slp, lons, lats, window=100):
     return fig
 
 
-def plot_movie(m, lat, lon, val, pred, dates, model_title='', plot_kwargs=None, file_dir=None):
+def plot_movie(m, lat, lon, val, pred, dates, model_title='', plot_kwargs=None, out_directory=None):
     """
     Plot a series of images for a forecast and the verification.
 
@@ -136,7 +139,7 @@ def plot_movie(m, lat, lon, val, pred, dates, model_title='', plot_kwargs=None, 
     :param dates: array-like: datetime objects of verification datetimes
     :param model_title: str: name of the model, e.g., 'Neural net prediction'
     :param plot_kwargs: dict: passed to the plot pcolormesh() method
-    :param file_dir: str: folder in which to save image files
+    :param out_directory: str: folder in which to save image files
     """
     if (len(dates) != val.shape[0]) and (len(dates) != pred.shape[0]):
         raise ValueError("'val' and 'pred' must have the same first (time) dimension as 'dates'")
@@ -159,5 +162,113 @@ def plot_movie(m, lat, lon, val, pred, dates, model_title='', plot_kwargs=None, 
         m.drawparallels(np.arange(0., 91., 45.))
         m.drawmeridians(np.arange(0., 361., 90.))
         ax.set_title('%s at $t=%d$ (%s)' % (model_title, hours, date))
-        plt.savefig('%s/%05d.png' % (file_dir, d), bbox_inches='tight', dpi=150)
+        plt.savefig('%s/%05d.png' % (out_directory, d), bbox_inches='tight', dpi=150)
         fig.clear()
+
+
+def history_plot(train_hist, val_hist, model_name='', out_directory=None):
+    """
+    Plot the training history of a model.
+
+    :param train_hist: array-like: training loss history
+    :param val_hist: array-like: validation loss history
+    :param model_name: str: name of model
+    :param out_directory: str: if not None, save the figure to this directory
+    :return: plt.Figure
+    """
+    fig = plt.figure()
+    fig.set_size_inches(6, 4)
+    plt.plot(train_hist, label='train MAE', linewidth=2)
+    plt.plot(val_hist, label='val MAE', linewidth=2)
+    plt.grid(True, color='lightgray', zorder=-100)
+    plt.xlabel('epoch')
+    plt.ylabel('MAE')
+    plt.legend(loc='best')
+    plt.title('%s training history' % model_name)
+    if out_directory is not None:
+        plt.savefig('%s/%s_history.pdf' % (out_directory, remove_chars(model_name)), bbox_inches='tight')
+    return fig
+
+
+def forecast_example_plot(base, verif, forecast, f_hour, model_name='', plot_diff=True, out_directory=None):
+    """
+    Plot the initial, verification, and forecast states for a model at a given forecast hour.
+
+    :param base: 2d DataArray with dimensions 'lat', 'lon': initial state
+    :param verif: 2d DataArray with dimensions 'lat', 'lon': verification state
+    :param forecast: 2d DataArray with dimensions 'lat', 'lon': forecast state
+    :param f_hour: int: forecast hour (for title purposes)
+    :param model_name: str: name of the model
+    :param plot_diff: bool: if True, add a filled contour for the difference between the forecast and verification
+    :param out_directory: str: if not None, save the figure to this directory
+    :return: plt.Figure
+    """
+    # Plot an example forecast
+    lons, lats = np.meshgrid(base.lon, base.lat)
+    fig = plt.figure()
+    fig.set_size_inches(9, 9)
+    m = Basemap(llcrnrlon=0., llcrnrlat=0., urcrnrlon=360., urcrnrlat=90.,
+                resolution='l', projection='cyl', lat_0=40., lon_0=0.)
+    x, y = m(lons, lats)
+    ax = plt.subplot(311)
+    if plot_diff:
+        m.contour(x, y, base, np.arange(-2.5, 1.6, 0.5), cmap='jet')
+    else:
+        m.pcolormesh(x, y, base, vmin=-2.5, vmax=1.5, cmap='YlGnBu_r')
+    m.drawcoastlines()
+    m.drawparallels(np.arange(0., 91., 45.))
+    m.drawmeridians(np.arange(0., 361., 90.))
+    ax.set_title('$t=0$ predictors')
+    ax = plt.subplot(312)
+    if plot_diff:
+        m.contour(x, y, verif, np.arange(-2.5, 1.6, 0.5), cmap='jet')
+    else:
+        m.pcolormesh(x, y, verif, vmin=-2.5, vmax=1.5, cmap='YlGnBu_r')
+    m.drawcoastlines()
+    m.drawparallels(np.arange(0., 91., 45.))
+    m.drawmeridians(np.arange(0., 361., 90.))
+    ax.set_title('$t=%d$ verification (%s)' % f_hour)
+    ax = plt.subplot(313)
+    if plot_diff:
+        m.contour(x, y, forecast, np.arange(-2.5, 1.6, 0.5), cmap='jet')
+        m.pcolormesh(x, y, forecast - verif, vmin=-1, vmax=1, cmap='seismic')
+    else:
+        m.pcolormesh(x, y, forecast, vmin=-2.5, vmax=1.5, cmap='YlGnBu_r')
+    # plt.colorbar(orientation='horizontal')
+    m.drawcoastlines()
+    m.drawparallels(np.arange(0., 91., 45.))
+    m.drawmeridians(np.arange(0., 361., 90.))
+    ax.set_title('$t=%d$ forecast' % f_hour)
+    if out_directory is not None:
+        plt.savefig('%s/%s_example_%d.pdf' % (out_directory, remove_chars(model_name), f_hour), bbox_inches='tight')
+    return fig
+
+
+def zonal_mean_plot(obs_mean, obs_std, pred_mean, pred_std, f_hour, model_name='', out_directory=None):
+    """
+    Plot the zonal mean and standard deviation of observed and predicted forecast states.
+
+    :param obs_mean: 1d DataArray with dimension 'lat': observed zonal mean
+    :param obs_std: 1d DataArray with dimension 'lat': observed zonal std
+    :param pred_mean: 1d DataArray with dimension 'lat': forecast zonal mean
+    :param pred_std: 1d DataArray with dimension 'lat': forecast zonal std
+    :param f_hour: int: forecast hour of the prediction
+    :param model_name: str: name of the model
+    :param out_directory: str: if not None, save the figure to this directory
+    :return:
+    """
+    fig = plt.figure()
+    fig.set_size_inches(4, 6)
+    plt.fill_betweenx(obs_mean.lat, obs_mean - obs_std, obs_mean + obs_std,
+                      facecolor='lightgray', zorder=-100)
+    plt.plot(obs_mean, obs_mean.lat, label='observed')
+    plt.plot(pred_mean, pred_mean.lat, label='%d-hour prediction' % f_hour)
+    plt.legend(loc='best')
+    plt.grid(True, color='lightgray', zorder=-100)
+    plt.plot(pred_mean - pred_std, pred_mean.lat, 'k:', linewidth=0.7)
+    plt.plot(pred_mean + pred_std, pred_mean.lat, 'k:', linewidth=0.7)
+    plt.xlabel('zonal mean height')
+    plt.ylabel('latitude')
+    plt.ylim([0., 90.])
+    plt.savefig('%s/%s_zonal_climo.pdf' % (out_directory, remove_chars(model_name)), bbox_inches='tight')
+    plt.show()

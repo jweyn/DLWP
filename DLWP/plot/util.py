@@ -7,6 +7,7 @@
 """
 Plotting utilities.
 """
+import re
 
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap, ListedColormap
@@ -241,3 +242,13 @@ def shifted_color_map(cmap, start=0, midpoint=0.5, stop=1.0, name='shiftedcmap')
     new_cmap = LinearSegmentedColormap(name, cdict)
     # plt.register_cmap(cmap=new_cmap)
     return new_cmap
+
+
+def remove_chars(s):
+    """
+    Remove characters from a string that have unintended effects on file paths.
+
+    :param s: str
+    :return: str
+    """
+    return ''.join(re.split('[$/\\\\]', s))

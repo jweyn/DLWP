@@ -67,8 +67,10 @@ plot_forecast_hour = 24
 model_dt = 6
 
 # Variable and level index to plot; scaling option
-variable = 'HGT'
-level = 500
+variable_sel = {
+    'variable': 'HGT',
+    'level': 500
+}
 scale_variables = True
 scale_factor = 0.1
 
@@ -162,8 +164,8 @@ lon_min = np.min(longitude_range)
 lon_max = np.max(longitude_range)
 
 # Get the mean and std of the data
-z500_mean = dataset.sel(variable=variable, level=level).variables['mean'].values
-z500_std = dataset.sel(variable=variable, level=level).variables['std'].values
+variable_mean = dataset.sel(**variable_sel).variables['mean'].values
+variable_std = dataset.sel(**variable_sel).variables['std'].values
 
 
 #%% Make forecasts
@@ -191,12 +193,11 @@ for mod, model in enumerate(models):
     print('Predicting with model %s...' % model_labels[mod])
     time_series = dlwp.predict_timeseries(p_val, num_forecast_steps)
     if scale_variables:
-        time_series = time_series * z500_std + z500_mean
+        time_series = time_series * variable_std + variable_mean
     time_series = verify.add_metadata_to_forecast(time_series, f_hour, val_ds)
 
     # Slice the array as we want it
-    time_series = time_series.sel(variable=(slice(None) if variable is None else variable),
-                                  level=(slice(None) if level is None else level),
+    time_series = time_series.sel(**variable_sel,
                                   lat=((time_series.lat >= lat_min) & (time_series.lat <= lat_max)),
                                   lon=((time_series.lon >= lon_min) & (time_series.lon <= lon_max)))
 
@@ -215,7 +216,7 @@ if baro_ds is not None:
                        lon=((baro_ds.lon >= lon_min) & (baro_ds.lon <= lon_max)))
     baro.load()
     if not scale_variables:
-        baro['Z'][:] = (baro['Z'] - z500_mean) / z500_std
+        baro['Z'][:] = (baro['Z'] - variable_mean) / variable_std
     model_forecasts.append(scale_factor * baro['Z'])
     model_labels.append('Barotropic')
 
@@ -230,7 +231,7 @@ if cfs is not None:
                              lon=((cfs.Dataset.lon >= lon_min) & (cfs.Dataset.lon <= lon_max)))
     cfs_ds.load()
     if not scale_variables:
-        cfs_ds['z500'][:] = (cfs_ds['z500'] - z500_mean) / z500_std
+        cfs_ds['z500'][:] = (cfs_ds['z500'] - variable_mean) / variable_std
     model_forecasts.append(scale_factor * cfs_ds['z500'])
     model_labels.append('CFS')
 
@@ -252,17 +253,17 @@ for date in plot_dates:
     plot_fields = [f.sel(f_hour=plot_forecast_hour, time=date64) for f in model_forecasts]
 
     init_data = dataset['predictors'].isel(time_step=-1).sel(
-        sample=date64, variable=variable, level=level,
+        sample=date64, **variable_sel,
         lat=((dataset.lat >= lat_min) & (dataset.lat <= lat_max)),
         lon=((dataset.lon >= lon_min) & (dataset.lon <= lon_max)))
     verif_data = dataset['predictors'].isel(time_step=-1).sel(
-        sample=verif_date64, variable=variable, level=level,
+        sample=verif_date64, **variable_sel,
         lat=((dataset.lat >= lat_min) & (dataset.lat <= lat_max)),
         lon=((dataset.lon >= lon_min) & (dataset.lon <= lon_max)))
 
     if scale_variables:
-        init_data = init_data * z500_std + z500_mean
-        verif_data = verif_data * z500_std + z500_mean
+        init_data = init_data * variable_std + variable_mean
+        verif_data = verif_data * variable_std + variable_mean
 
     file_name_complete = '%s/%s_%s.%s' % (plot_directory, plot_file_name, datetime.strftime(date, '%Y%m%d%H'),
                                           plot_file_type)

@@ -16,8 +16,7 @@ import pandas as pd
 import xarray as xr
 from datetime import datetime
 from DLWP.model import DLWPTorchNN, DataGenerator
-from DLWP.model.preprocessing import train_test_split_ind
-from DLWP.util import save_torch_model
+from DLWP.util import save_torch_model, train_test_split_ind
 from s2cnn import s2_near_identity_grid
 
 

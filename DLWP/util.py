@@ -9,6 +9,7 @@ DLWP utilities.
 """
 
 import pickle
+import random
 import tempfile
 from importlib import import_module
 from copy import copy
@@ -18,6 +19,8 @@ import keras.models
 # ==================================================================================================================== #
 # General utility functions
 # ==================================================================================================================== #
+import numpy as np
+
 
 def make_keras_picklable():
     """
@@ -188,3 +191,65 @@ def load_torch_model(file_name, history=False):
         return model, h
     else:
         return model
+
+
+def delete_nan_samples(predictors, targets, large_fill_value=False, threshold=None):
+    """
+    Delete any samples from the predictor and target numpy arrays and return new, reduced versions.
+
+    :param predictors: ndarray, shape [num_samples,...]: predictor data
+    :param targets: ndarray, shape [num_samples,...]: target data
+    :param large_fill_value: bool: if True, treats very large values (>= 1e20) as NaNs
+    :param threshold: float 0-1: if not None, then removes any samples with a fraction of NaN larger than this
+    :return: predictors, targets: ndarrays with samples removed
+    """
+    if threshold is not None and not (0 <= threshold <= 1):
+        raise ValueError("'threshold' must be between 0 and 1")
+    if large_fill_value:
+        predictors[(predictors >= 1.e20) | (predictors <= -1.e20)] = np.nan
+        targets[(targets >= 1.e20) | (targets <= -1.e20)] = np.nan
+    p_shape = predictors.shape
+    t_shape = targets.shape
+    predictors = predictors.reshape((p_shape[0], -1))
+    targets = targets.reshape((t_shape[0], -1))
+    if threshold is None:
+        p_ind = list(np.where(np.isnan(predictors))[0])
+        t_ind = list(np.where(np.isnan(targets))[0])
+    else:
+        p_ind = list(np.where(np.mean(np.isnan(predictors), axis=1) >= threshold)[0])
+        t_ind = list(np.where(np.mean(np.isnan(targets), axis=1) >= threshold)[0])
+    bad_ind = list(set(p_ind + t_ind))
+    predictors = np.delete(predictors, bad_ind, axis=0)
+    targets = np.delete(targets, bad_ind, axis=0)
+    new_p_shape = (predictors.shape[0],) + p_shape[1:]
+    new_t_shape = (targets.shape[0],) + t_shape[1:]
+    return predictors.reshape(new_p_shape), targets.reshape(new_t_shape)
+
+
+def train_test_split_ind(n_sample, test_size, method='random'):
+    """
+    Return indices splitting n_samples into train and test index lists.
+
+    :param n_sample: int: number of samples
+    :param test_size: int: number of samples in test set
+    :param method: str: 'first' ('last') to take first (last) t samples as test, or 'random'
+    :return: (list, list): list of train indices, list of test indices
+    """
+    if method == 'first':
+        test_set = list(range(0, test_size))
+        train_set = list(range(test_size, n_sample))
+    elif method == 'last':
+        test_set = list(range(n_sample - test_size, n_sample))
+        train_set = list(range(0, n_sample - test_size))
+    elif method == 'random':
+        train_set = list(range(n_sample))
+        test_set = []
+        for j in range(test_size):
+            i = random.choice(train_set)
+            test_set.append(i)
+            train_set.remove(i)
+        test_set.sort()
+    else:
+        raise ValueError("'method' must be 'first', 'last', or 'random'")
+
+    return train_set, test_set

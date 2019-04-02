@@ -15,8 +15,7 @@ import pandas as pd
 import xarray as xr
 from datetime import datetime
 from DLWP.model import DLWPNeuralNet, DataGenerator, SmartDataGenerator
-from DLWP.model.preprocessing import train_test_split_ind
-from DLWP.util import save_model
+from DLWP.util import save_model, train_test_split_ind
 from DLWP.custom import RNNResetStates, EarlyStoppingMin, latitude_weighted_loss
 from keras.regularizers import l2
 from keras.losses import mean_squared_error
@@ -26,15 +25,15 @@ from keras.callbacks import History, TensorBoard
 #%% Open the predictor data
 
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
-predictor_file = os.path.join(root_directory, 'cfs_1979-2010_hgt-thick_300-500-700_NH_T2.nc')
-model_file = os.path.join(root_directory, 'dlwp_mem_test')
-log_directory = os.path.join(root_directory, 'logs', 'mem_test')
+predictor_file = os.path.join(root_directory, 'cfs_6h_1979-2010_z500-th3-7-w700-rh850-pwat_NH_T2.nc')
+model_file = os.path.join(root_directory, 'dlwp_6h_1979-2010_z500-th3-7-w700-rh850_NH_T2_400')
+log_directory = os.path.join(root_directory, 'logs', 'pwat-w-rh-lstm')
 model_is_convolutional = True
 model_is_recurrent = True
 
 # NN parameters. Regularization is applied to LSTM layers by default. weight_loss indicates whether to weight the
 # loss function preferentially in the mid-latitudes.
-min_epochs = 200
+min_epochs = 400
 max_epochs = 1000
 patience = 50
 batch_size = 64
@@ -63,6 +62,9 @@ train_set = list(pd.date_range(datetime(1979, 1, 1, 6), datetime(2003, 1, 1, 0),
 
 # For upsampling, we need an even number of lat/lon points. We'll crop out the north pole.
 data = data.isel(lat=(data.lat < 90.0))
+
+# Cut out some variables
+data = data.sel(varlev=['V VEL/700', 'HGT/500', 'THICK/300-700', 'R H/850'])
 
 
 #%% Build a model and the data generators

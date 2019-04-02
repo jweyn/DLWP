@@ -9,3 +9,4 @@ Plotting tools for DWLP.
 """
 
 from .plot_functions import *
+from . import util
