@@ -360,7 +360,7 @@ class Preprocessor(object):
                         'units': 'N/A',
                     })
                 }, coords={
-                    'sample': ('sample', ds['time'].values[:n_sample], {
+                    'sample': ('sample', ds['time'].values[time_step-1:n_sample+time_step-1], {
                         'long_name': 'Sample start time'
                     }),
                     'varlev': ('varlev', var_lev),
@@ -463,9 +463,6 @@ class Preprocessor(object):
         :param verbose: bool: print progress statements
         :return: opens Dataset on self.data
         """
-        # Check time step parameter
-        if int(time_step) < 1:
-            raise ValueError("'time_step' must be >= 1")
         # Check chunk size
         if int(chunk_size) < 1:
             raise ValueError("'chunk_size' must be >= 1")
@@ -518,7 +515,7 @@ class Preprocessor(object):
         for v in vars_available:
             if v not in variables:
                 ds = ds.drop(v)
-        n_sample, n_var, n_level, n_lat, n_lon = (len(all_dates) - (2 * time_step - 1), len(variables), len(levels),
+        n_sample, n_var, n_level, n_lat, n_lon = (len(all_dates), len(variables), len(levels),
                                                   ds.dims['lat'], ds.dims['lon'])
         if n_sample < 1:
             raise ValueError('too many time steps for time dimension')
@@ -541,7 +538,6 @@ class Preprocessor(object):
             nc_fid.description = 'Training data for DLWP'
             nc_fid.setncattr('scaling', 'True' if scale_variables else 'False')
             nc_fid.createDimension('sample', 0)
-            nc_fid.createDimension('time_step', time_step)
             if pairwise:
                 nc_fid.createDimension('varlev', n_var)
             else:
@@ -594,25 +590,19 @@ class Preprocessor(object):
                 'units': time_units
             })
             times = np.array([datetime.utcfromtimestamp(d/1e9)
-                              for d in ds['time'].values[time_step-1:n_sample+time_step-1].astype(datetime)])
+                              for d in ds['time'].values.astype(datetime)])
             nc_fid.variables['sample'][:] = nc.date2num(times, time_units)
 
             # Create predictors and targets variables
             if pairwise:
-                dims = ('sample', 'time_step', 'varlev', 'lat', 'lon')
-                chunks = (chunk_size, time_step, n_var, n_lat, n_lon)
+                dims = ('sample', 'varlev', 'lat', 'lon')
+                chunks = (chunk_size, n_var, n_lat, n_lon)
             else:
-                dims = ('sample', 'time_step', 'variable', 'level', 'lat', 'lon')
-                chunks = (chunk_size, time_step, n_var, n_level, n_lat, n_lon)
+                dims = ('sample', 'variable', 'level', 'lat', 'lon')
+                chunks = (chunk_size, n_var, n_level, n_lat, n_lon)
             predictors = nc_fid.createVariable('predictors', np.float32, dims, chunksizes=chunks)
             predictors.setncatts({
                 'long_name': 'Predictors',
-                'units': 'N/A',
-                '_FillValue': fill_value
-            })
-            targets = nc_fid.createVariable('targets', np.float32, dims, chunksizes=chunks)
-            targets.setncatts({
-                'long_name': 'Targets',
                 'units': 'N/A',
                 '_FillValue': fill_value
             })
@@ -623,9 +613,9 @@ class Preprocessor(object):
                 print('Preprocessor.data_to_samples: loading data to memory')
             ds.load()
             if pairwise:
-                predictors = np.full((n_sample, time_step, n_var, n_lat, n_lon), np.nan, dtype=np.float32)
+                predictors = np.full((n_sample, n_var, n_lat, n_lon), np.nan, dtype=np.float32)
             else:
-                predictors = np.full((n_sample, time_step, n_var, n_level, n_lat, n_lon), np.nan, dtype=np.float32)
+                predictors = np.full((n_sample, n_var, n_level, n_lat, n_lon), np.nan, dtype=np.float32)
             targets = predictors.copy()
 
         # Fill in the data. Go through time steps. Iterate by variable and level for scaling.
@@ -650,14 +640,7 @@ class Preprocessor(object):
                         print('Preprocessor.data_to_samples: writing batch %s of %s'
                               % (i + 1, n_sample // batch_samples + 1))
                     idx = slice(s, min(s + batch_samples, n_sample))
-                    for t in range(time_step):
-                        idxp = slice(s + t, min(s + t + batch_samples, n_sample + t))
-                        idxt = slice(s + t + time_step,
-                                     min(s + t + time_step + batch_samples, n_sample + t + time_step))
-                        predictors[idx, t, vl, ...] = (ds[variables[vl]].isel(time=idxp).sel(**sel_kw).values
-                                                       - v_mean) / v_std
-                        targets[idx, t, vl, ...] = (ds[variables[vl]].isel(time=idxt).sel(**sel_kw).values
-                                                    - v_mean) / v_std
+                    predictors[idx, vl, ...] = (ds[variables[vl]].isel(time=idx).sel(**sel_kw).values - v_mean) / v_std
         else:
             for v, var in enumerate(variables):
                 for l, lev in enumerate(levels):
@@ -679,11 +662,7 @@ class Preprocessor(object):
                             print('Preprocessor.data_to_samples: writing batch %s of %s'
                                   % (i+1, n_sample//batch_samples+1))
                         idx = slice(s, min(s+batch_samples, n_sample))
-                        for t in range(time_step):
-                            idxp = slice(s+t, min(s+t+batch_samples, n_sample+t))
-                            idxt = slice(s+t+time_step, min(s+t+time_step+batch_samples, n_sample+t+time_step))
-                            predictors[idx, t, v, l, ...] = (ds[var].isel(time=idxp, level=l).values - v_mean) / v_std
-                            targets[idx, t, v, l, ...] = (ds[var].isel(time=idxt, level=l).values - v_mean) / v_std
+                        predictors[idx, v, l, ...] = (ds[var].isel(time=idx, level=l).values - v_mean) / v_std
 
         if not in_memory:
             # Create means and stds variables
@@ -722,12 +701,8 @@ class Preprocessor(object):
         else:
             if pairwise:
                 result_ds = xr.Dataset({
-                    'predictors': (['sample', 'time_step', 'varlev', 'lat', 'lon'], predictors, {
+                    'predictors': (['sample', 'varlev', 'lat', 'lon'], predictors, {
                         'long_name': 'Predictors',
-                        'units': 'N/A'
-                    }),
-                    'targets': (['sample', 'time_step', 'varlev', 'lat', 'lon'], targets, {
-                        'long_name': 'Targets',
                         'units': 'N/A'
                     }),
                     'mean': (['varlev'], means, {
@@ -739,7 +714,7 @@ class Preprocessor(object):
                         'units': 'N/A',
                     })
                 }, coords={
-                    'sample': ('sample', ds['time'].values[:n_sample], {
+                    'sample': ('sample', ds['time'].values, {
                         'long_name': 'Sample start time'
                     }),
                     'varlev': ('varlev', var_lev),
@@ -758,12 +733,8 @@ class Preprocessor(object):
                 })
             else:
                 result_ds = xr.Dataset({
-                    'predictors': (['sample', 'time_step', 'variable', 'level', 'lat', 'lon'], predictors, {
+                    'predictors': (['sample', 'variable', 'level', 'lat', 'lon'], predictors, {
                         'long_name': 'Predictors',
-                        'units': 'N/A'
-                    }),
-                    'targets': (['sample', 'time_step', 'variable', 'level', 'lat', 'lon'], targets, {
-                        'long_name': 'Targets',
                         'units': 'N/A'
                     }),
                     'mean': (['variable', 'level'], means, {
@@ -775,7 +746,7 @@ class Preprocessor(object):
                         'units': 'N/A',
                     })
                 }, coords={
-                    'sample': ('sample', ds['time'].values[:n_sample], {
+                    'sample': ('sample', ds['time'].values, {
                         'long_name': 'Sample start time'
                     }),
                     'variable': ('variable', variables),
