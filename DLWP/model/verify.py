@@ -184,3 +184,7 @@ def add_metadata_to_forecast(forecast, f_hour, meta_ds):
             dims=['f_hour', 'time', 'varlev', 'lat', 'lon']
         )
     return forecast
+
+
+def generate_verification():
+    pass

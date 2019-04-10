@@ -12,7 +12,7 @@ import numpy as np
 import xarray as xr
 from keras.utils import Sequence
 
-from ..util import delete_nan_samples
+from ..util import delete_nan_samples, insolation
 
 
 class DataGenerator(Sequence):
@@ -38,7 +38,7 @@ class DataGenerator(Sequence):
         self._batch_size = batch_size
         self._shuffle = shuffle
         self._remove_nan = remove_nan
-        self._convolution = self.model.is_convolutional
+        self._is_convolutional = self.model.is_convolutional
         self._keep_time_axis = self.model.is_recurrent
         self._impute_missing = self.model.impute
         self._indices = []
@@ -50,9 +50,12 @@ class DataGenerator(Sequence):
     @property
     def shape(self):
         """
-        :return: the original shape of ensemble predictors, ([time_step,] variable, level, lat, lon)
+        :return: the full shape of predictors, (time_step, [variable, level,] lat, lon)
         """
-        return self.ds.predictors.shape[1:]
+        if self._has_time_step:
+            return self.ds.predictors.shape[1:]
+        else:
+            return (1,) + self.ds.predictors.shape[1:]
 
     @property
     def n_features(self):
@@ -68,10 +71,7 @@ class DataGenerator(Sequence):
             (features,).
         """
         if self._keep_time_axis:
-            if self._has_time_step:
-                return (self.shape[0],) + (self.n_features // self.shape[0],)
-            else:
-                return (1,) + (self.n_features,)
+            return (self.shape[0],) + (self.n_features // self.shape[0],)
         else:
             return (self.n_features,) + ()
 
@@ -82,10 +82,7 @@ class DataGenerator(Sequence):
             (time_step, channels, y, x); if not, (channels, y, x).
         """
         if self._keep_time_axis:
-            if self._has_time_step:
-                return (self.shape[0],) + (int(np.prod(self.shape[1:-2])),) + self.shape[-2:]
-            else:
-                return (1,) + (int(np.prod(self.shape[:-2])),) + self.shape[-2:]
+            return (self.shape[0],) + (int(np.prod(self.shape[1:-2])),) + self.shape[-2:]
         else:
             return (int(np.prod(self.shape[:-2])),) + self.ds.predictors.shape[-2:]
 
@@ -127,7 +124,7 @@ class DataGenerator(Sequence):
             p, t = self.model.scaler_transform(p, t)
 
         # Format spatial shape for convolutions; also takes care of time axis
-        if self._convolution:
+        if self._is_convolutional:
             p = p.reshape((n_sample,) + self.convolution_shape)
             t = t.reshape((n_sample,) + self.convolution_shape)
         elif self._keep_time_axis:
@@ -146,7 +143,7 @@ class DataGenerator(Sequence):
         """
         Get one batch of data
         :param index: index of batch
-        :return:
+        :return: (ndarray, ndarray): predictors, targets
         """
         # Generate indexes of the batch
         indexes = self._indices[index * self._batch_size:(index + 1) * self._batch_size]
@@ -183,20 +180,18 @@ class SmartDataGenerator(Sequence):
         self._batch_size = batch_size
         self._shuffle = shuffle
         self._remove_nan = remove_nan
-        self._convolution = self.model.is_convolutional
+        self._is_convolutional = self.model.is_convolutional
         self._keep_time_axis = self.model.is_recurrent
         self._impute_missing = self.model.impute
         self._indices = []
         self._n_sample = ds.dims['sample']
         if 'time_step' in ds.dims:
-            self._has_time_step = True
             self.time_dim = ds.dims['time_step']
             self.da = self.ds.predictors.isel(time_step=0)
             # Add the last time steps in the series
             self.da = xr.concat((self.da, self.ds.predictors.isel(
                 sample=slice(self._n_sample - self.time_dim + 1, None), time_step=-1)), dim='sample')
         else:
-            self._has_time_step = False
             self.time_dim = 1
             self.da = self.ds.predictors
 
@@ -210,9 +205,9 @@ class SmartDataGenerator(Sequence):
     @property
     def shape(self):
         """
-        :return: the original shape of ensemble predictors, ([time_step,] variable, level, lat, lon)
+        :return: the full shape of predictors, (time_step, [variable, level,] lat, lon)
         """
-        return self.ds.predictors.shape[1:]
+        return (self.time_dim,) + self.da.shape[1:]
 
     @property
     def n_features(self):
@@ -228,10 +223,7 @@ class SmartDataGenerator(Sequence):
             (features,).
         """
         if self._keep_time_axis:
-            if self._has_time_step:
-                return (self.shape[0],) + (self.n_features // self.shape[0],)
-            else:
-                return (1,) + (self.n_features,)
+            return (self.shape[0],) + (self.n_features // self.shape[0],)
         else:
             return (self.n_features,) + ()
 
@@ -242,10 +234,7 @@ class SmartDataGenerator(Sequence):
             (time_step, channels, y, x); if not, (channels, y, x).
         """
         if self._keep_time_axis:
-            if self._has_time_step:
-                return (self.shape[0],) + (int(np.prod(self.shape[1:-2])),) + self.shape[-2:]
-            else:
-                return (1,) + (int(np.prod(self.shape[:-2])),) + self.shape[-2:]
+            return (self.shape[0],) + (int(np.prod(self.shape[1:-2])),) + self.shape[-2:]
         else:
             return (int(np.prod(self.shape[:-2])),) + self.ds.predictors.shape[-2:]
 
@@ -288,7 +277,7 @@ class SmartDataGenerator(Sequence):
             p, t = self.model.scaler_transform(p, t)
 
         # Format spatial shape for convolutions; also takes care of time axis
-        if self._convolution:
+        if self._is_convolutional:
             p = p.reshape((n_sample,) + self.convolution_shape)
             t = t.reshape((n_sample,) + self.convolution_shape)
         elif self._keep_time_axis:
@@ -307,7 +296,7 @@ class SmartDataGenerator(Sequence):
         """
         Get one batch of data
         :param index: index of batch
-        :return:
+        :return: (ndarray, ndarray): predictors, targets
         """
         # Generate indexes of the batch
         indexes = self._indices[index * self._batch_size:(index + 1) * self._batch_size]
@@ -325,11 +314,12 @@ class SeriesDataGenerator(Sequence):
     'predictors', which is a continuous time sequence of weather data. The user supplies arguments to load specific
     variables/levels and the number of time steps for the inputs/outputs. It is highly recommended to use the option
     to load the data into memory if enough memory is available as the increased I/O calls for generating the correct
-    data sequences will take a toll.
+    data sequences will take a toll. This class also makes it possible to add model-invariant data, such as incoming
+    solar radiation, to the inputs.
     """
 
     def __init__(self, model, ds, input_sel=None, output_sel=None, input_time_steps=1, output_time_steps=1,
-                 batch_size=32, shuffle=False, remove_nan=True, load=True):
+                 add_insolation=False, batch_size=32, shuffle=False, remove_nan=True, load=True):
         """
         Initialize a SeriesDataGenerator.
 
@@ -340,6 +330,7 @@ class SeriesDataGenerator(Sequence):
         :param input_time_steps: int: number of time steps in the input features
         :param output_time_steps: int: number of time steps in the output features (recommended either 1 or the same
             as input_time_steps)
+        :param add_insolation: bool: if True, add insolation to the inputs. Incompatible with 3-d convolutions.
         :param batch_size: int: number of samples to take at a time from the dataset
         :param shuffle: bool: if True, randomly select batches
         :param remove_nan: bool: if True, remove any samples with NaNs
@@ -355,11 +346,11 @@ class SeriesDataGenerator(Sequence):
         self._batch_size = batch_size
         self._shuffle = shuffle
         self._remove_nan = remove_nan
-        self._convolution = self.model.is_convolutional
+        self._is_convolutional = self.model.is_convolutional
         self._keep_time_axis = self.model.is_recurrent
         self._impute_missing = self.model.impute
         self._indices = []
-        self._n_sample = ds.dims['sample']
+        self._n_sample = ds.dims['sample'] - input_time_steps - output_time_steps + 1
         if 'time_step' in ds.dims:
             self.da = self.ds.predictors.isel(time_step=0)
         else:
@@ -371,24 +362,34 @@ class SeriesDataGenerator(Sequence):
         self._output_time_steps = output_time_steps
         if load:
             self.da.load()
-        # TODO: fix time dimension shift for time_steps != 1
+
         self.input_da = self.da.sel(**self._input_sel)
         self.output_da = self.da.sel(**self._output_sel)
         self.on_epoch_end()
 
+        # Pre-generate the insolation data
+        self._add_insolation = int(add_insolation)
+        if add_insolation:
+            sol = insolation(self.da.sample.values, self.da.lat.values, self.da.lon.values)
+            self.insolation_da = xr.DataArray(sol, coords={
+                'sample': self.da.sample,
+                'lat': self.da.lat,
+                'lon': self.da.lon
+            }, dims=['sample', 'lat', 'lon'])
+
     @property
     def shape(self):
         """
-        :return: the original shape of inputs: (time_step, [variable, level,] lat, lon)
+        :return: the original shape of input data: (time_step, [variable, level,] lat, lon); excludes insolation
         """
         return (self._input_time_steps,) + self.input_da.shape[1:]
 
     @property
     def n_features(self):
         """
-        :return: int: the number of input features
+        :return: int: the number of input features; includes insolation
         """
-        return int(np.prod(self.shape))
+        return int(np.prod(self.shape)) + int(np.prod(self.shape[-2:])) * self._input_time_steps * self._add_insolation
 
     @property
     def dense_shape(self):
@@ -405,17 +406,18 @@ class SeriesDataGenerator(Sequence):
     def convolution_shape(self):
         """
         :return: the shape of the predictors expected by a Conv2D or ConvLSTM2D layer. If the model is recurrent,
-            (time_step, channels, y, x); if not, (channels, y, x).
+            (time_step, channels, y, x); if not, (channels, y, x). Includes insolation.
         """
         if self._keep_time_axis:
-            return (self._input_time_steps,) + (int(np.prod(self.shape[1:-2])),) + self.shape[-2:]
+            return (self._input_time_steps,) + (int(np.prod(self.shape[1:-2]))+self._add_insolation,) + self.shape[-2:]
         else:
-            return (int(np.prod(self.shape[:-2])),) + self.input_da.shape[-2:]
+            return (int(np.prod(self.shape[:-2])) +
+                    self._input_time_steps * self._add_insolation,) + self.input_da.shape[-2:]
 
     @property
     def shape_2d(self):
         """
-        :return: the shape of the predictors expected by a Conv2D layer, (channels, y, x)
+        :return: the shape of the predictors expected by a Conv2D layer, (channels, y, x); includes insolation
         """
         if self._keep_time_axis:
             self._keep_time_axis = False
@@ -487,9 +489,17 @@ class SeriesDataGenerator(Sequence):
         n_sample = len(samples)
         p = np.concatenate([self.input_da.values[samples + n, np.newaxis] for n in range(self._input_time_steps)],
                            axis=1)
-        p = p.reshape((n_sample, -1))
         t = np.concatenate([self.output_da.values[samples + self._input_time_steps + n, np.newaxis]
                             for n in range(self._output_time_steps)], axis=1)
+        if self._add_insolation:
+            self._add_insolation = False
+            s = tuple(self.convolution_shape)
+            self._add_insolation = True
+            sol = np.concatenate([self.insolation_da.values[samples + n, np.newaxis]
+                                  for n in range(self._input_time_steps)], axis=1)
+            p = p.reshape((n_sample,) + s)
+            p = np.concatenate([p, sol[:, :, np.newaxis]], axis=2)
+        p = p.reshape((n_sample, -1))
         t = t.reshape((n_sample, -1))
 
         # Remove samples with NaN; scale and impute
@@ -501,7 +511,7 @@ class SeriesDataGenerator(Sequence):
             p, t = self.model.scaler_transform(p, t)
 
         # Format spatial shape for convolutions; also takes care of time axis
-        if self._convolution:
+        if self._is_convolutional:
             p = p.reshape((n_sample,) + self.convolution_shape)
             t = t.reshape((n_sample,) + self.output_convolution_shape)
         elif self._keep_time_axis:
@@ -520,7 +530,7 @@ class SeriesDataGenerator(Sequence):
         """
         Get one batch of data
         :param index: index of batch
-        :return:
+        :return: (ndarray, ndarray): predictors, targets
         """
         # Generate indexes of the batch
         indexes = self._indices[index * self._batch_size:(index + 1) * self._batch_size]

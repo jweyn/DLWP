@@ -14,6 +14,7 @@ import tempfile
 from importlib import import_module
 from copy import copy
 import keras.models
+import pandas as pd
 
 
 # ==================================================================================================================== #
@@ -253,3 +254,58 @@ def train_test_split_ind(n_sample, test_size, method='random'):
         raise ValueError("'method' must be 'first', 'last', or 'random'")
 
     return train_set, test_set
+
+
+def day_of_year(date):
+    year_start = pd.Timestamp(date.year, 1, 1)
+    return (date - year_start).total_seconds() / 3600. / 24.
+
+
+def insolation(dates, lat, lon, S=1.):
+    """
+    Calculate the approximate solar insolation for given dates
+
+    :param dates: 1d array: datetime or Timestamp
+    :param lat: 1d or 2d array of latitudes
+    :param lon: 1d or 2d array of longitudes (0-360º). If 2d, must match the shape of lat.
+    :param S: float: scaling factor (solar constant)
+    :return: 3d array: insolation (date, lat, lon)
+    """
+    try:
+        assert len(lat.shape) == len(lon.shape)
+    except AssertionError:
+        raise ValueError("'lat' and 'lon' must either both be 1d or both be 2d'")
+    if len(lat.shape) == 2:
+        try:
+            assert lat.shape == lon.shape
+        except AssertionError:
+            raise ValueError("shape mismatch between lat (%s) and lon (%s)" % (lat.shape, lon.shape))
+    if len(lat.shape) == 1:
+        lon, lat = np.meshgrid(lon, lat)
+
+    # Constants for year 1995 (standard)
+    eps = 23.4441 * np.pi / 180.
+    ecc = 0.016715
+    om = 282.7 * np.pi / 180.
+    beta = np.sqrt(1 - ecc ** 2.)
+    # Get the day of year. Ignore leap days.
+    days = pd.Series(dates)
+    days = days.apply(day_of_year)
+    # Longitude of the earth relative to the orbit, 1st order approximation
+    lambda_m0 = ecc * (1. + beta) * np.sin(om)
+    lambda_m = lambda_m0 + 2. * np.pi * (days.values - 80.5) / 365.
+    lambda_ = lambda_m + 2. * ecc * np.sin(lambda_m - om)
+    # Solar declination
+    dec = np.arcsin(np.sin(eps) * np.sin(lambda_))
+    # Hour angle
+    h = 2 * np.pi * (days.values[:, None, None] + lon / 360.)
+    # Distance
+    rho = (1. - ecc ** 2.) / (1. + ecc * np.cos(lambda_ - om))
+
+    # Insolation
+    lat *= np.pi / 180.
+    sol = S * (np.sin(lat[None, ...]) * np.sin(dec[:, None, None]) -
+               np.cos(lat[None, ...]) * np.cos(dec[:, None, None]) * np.cos(h)) * rho[:, None, None] ** -2.
+    sol[sol < 0.] = 0.
+
+    return sol

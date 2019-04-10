@@ -10,14 +10,19 @@ High-level APIs for building a DLWP model using PyTorch.
 
 import numpy as np
 import time
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-
+import warnings
 from .. import util
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+try:
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    import torch.optim as optim
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+except ImportError:
+    warnings.warn('DLWPTorchNN is not available because PyTorch is not installed.')
 
 
 class DLWPTorchNN(object):

@@ -8,14 +8,11 @@
 Implementation of deep learning model frameworks for DLWP.
 """
 
-import warnings
-
 from .models import DLWPNeuralNet
 from .generators import DataGenerator, SmartDataGenerator, SeriesDataGenerator
 from .preprocessing import Preprocessor
+from .extensions import TimeSeriesEstimator
 from . import verify
 
-try:
-    from .models_torch import DLWPTorchNN
-except ImportError:
-    warnings.warn('DLWPTorchNN is not available because PyTorch is not installed.')
+from .models_torch import DLWPTorchNN
+
