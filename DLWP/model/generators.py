@@ -352,7 +352,9 @@ class SeriesDataGenerator(Sequence):
         self._indices = []
         self._n_sample = ds.dims['sample'] - input_time_steps - output_time_steps + 1
         if 'time_step' in ds.dims:
-            self.da = self.ds.predictors.isel(time_step=0)
+            # Use -1 index because Preprocessor.data_to_samples (which generates a 'time_step' dim), assigns the
+            # datetime 'sample' dim based on the initialization time, time_step=-1
+            self.da = self.ds.predictors.isel(time_step=-1)
         else:
             self.da = self.ds.predictors
 
@@ -360,11 +362,13 @@ class SeriesDataGenerator(Sequence):
         self._output_sel = output_sel or {}
         self._input_time_steps = input_time_steps
         self._output_time_steps = output_time_steps
-        if load:
-            self.da.load()
 
         self.input_da = self.da.sel(**self._input_sel)
         self.output_da = self.da.sel(**self._output_sel)
+        if load:
+            self.input_da.load()
+            self.output_da.load()
+
         self.on_epoch_end()
 
         # Pre-generate the insolation data
@@ -492,9 +496,13 @@ class SeriesDataGenerator(Sequence):
         t = np.concatenate([self.output_da.values[samples + self._input_time_steps + n, np.newaxis]
                             for n in range(self._output_time_steps)], axis=1)
         if self._add_insolation:
+            # Pretend like we have no insolation and keep the time axis
             self._add_insolation = False
+            keep_time = bool(self._keep_time_axis)
+            self._keep_time_axis = True
             s = tuple(self.convolution_shape)
             self._add_insolation = True
+            self._keep_time_axis = bool(keep_time)
             sol = np.concatenate([self.insolation_da.values[samples + n, np.newaxis]
                                   for n in range(self._input_time_steps)], axis=1)
             p = p.reshape((n_sample,) + s)

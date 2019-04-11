@@ -66,11 +66,7 @@ class TimeSeriesEstimator(object):
                     self._input_sel = {k: np.array(v) for k, v in self.generator._input_sel.items()}
             else:
                 self._input_sel = {'varlev': np.array(self.generator.ds.predictors.coords['varlev'][:])}
-            # Find inputs not in outputs
-            self._inputs_not_in_outputs = {
-                'varlev': self._input_sel['varlev'][np.isin(self._output_sel['varlev'],
-                                                            self._input_sel['varlev'], invert=True)]
-            }
+            # Find outputs that need to replace inputs
             self._outputs_in_inputs = {
                 'varlev': np.array([v for v in self._output_sel['varlev'] if v in self._input_sel['varlev']])
             }
@@ -108,21 +104,13 @@ class TimeSeriesEstimator(object):
                 self._input_sel = {'variable': np.array(self.generator.ds.predictors.coords['variable'][:]),
                                    'level': np.array(self.generator.ds.predictors.coords['level'][:])}
             # Flatten variable/level
-            var, lev = np.meshgrid(self._input_sel['variable'], self._input_sel['level'])
-            varlev = np.array(['/'.join(v, l) for v, l in zip(var.flatten(), lev.flatten())])
+            lev, var = np.meshgrid(self._input_sel['level'], self._input_sel['variable'])
+            varlev = np.array(['/'.join([v, str(l)]) for v, l in zip(var.flatten(), lev.flatten())])
             self._input_sel['varlev'] = varlev
-            var, lev = np.meshgrid(self._output_sel['variable'], self._output_sel['level'])
-            varlev = np.array(['/'.join(v, l) for v, l in zip(var.flatten(), lev.flatten())])
+            lev, var = np.meshgrid(self._output_sel['level'], self._output_sel['variable'])
+            varlev = np.array(['/'.join([v, str(l)]) for v, l in zip(var.flatten(), lev.flatten())])
             self._output_sel['varlev'] = varlev
-            # Find inputs not in outputs
-            self._inputs_not_in_outputs = {
-                'variable': self._input_sel['variable'][np.isin(self._output_sel['variable'],
-                                                                self._input_sel['variable'], invert=True)],
-                'level': self._input_sel['level'][np.isin(self._output_sel['level'],
-                                                          self._input_sel['level'], invert=True)],
-                'varlev': self._input_sel['varlev'][np.isin(self._output_sel['varlev'],
-                                                            self._input_sel['varlev'], invert=True)],
-            }
+            # Find outputs that need to replace inputs
             self._outputs_in_inputs = {
                 'variable': np.array([v for v in self._output_sel['variable'] if v in self._input_sel['variable']]),
                 'level': np.array([v for v in self._output_sel['level'] if v in self._input_sel['level']]),
@@ -162,14 +150,17 @@ class TimeSeriesEstimator(object):
 
         # Effective forward time steps for each step
         if self._output_time_steps <= self._input_time_steps:
-            fill_in = True
+            keep_inputs = True
             es = self._output_time_steps
+            in_times = np.arange(self._input_time_steps) - (self._input_time_steps - self._output_time_steps)
         else:
-            fill_in = False
+            keep_inputs = False
             if prefer_first_times:
                 es = self._input_time_steps
+                in_times = np.arange(self._input_time_steps)
             else:
                 es = self._output_time_steps
+                in_times = np.arange(self._input_time_steps) + (self._output_time_steps - self._input_time_steps)
 
         # Load data from the generator
         p, t = self.generator.generate([])
@@ -179,7 +170,7 @@ class TimeSeriesEstimator(object):
         p = p.reshape((p_shape[0], self._input_time_steps, -1,) + self.generator.convolution_shape[-2:])
         p_da = xr.DataArray(
             p,
-            coords=[self.generator.ds.sample[:self.generator._n_sample], range(self._input_time_steps),
+            coords=[self.generator.ds.sample[:self.generator._n_sample], in_times,
                     self._input_sel['varlev'], self.generator.ds.lat, self.generator.ds.lon],
             dims=['sample', 'time_step', 'varlev', 'lat', 'lon']
         )
@@ -199,7 +190,7 @@ class TimeSeriesEstimator(object):
                 result[s].reshape((p_shape[0], self._output_time_steps, -1,) +
                                   self.generator.convolution_shape[-2:]),
                 coords=[self.generator.ds.sample[:self.generator._n_sample] + es * self._dt,
-                        range(self._output_time_steps), self._output_sel['varlev'],
+                        np.arange(self._output_time_steps), self._output_sel['varlev'],
                         self.generator.ds.lat, self.generator.ds.lon],
                 dims=['sample', 'time_step', 'varlev', 'lat', 'lon']
             )
@@ -208,23 +199,23 @@ class TimeSeriesEstimator(object):
             # Replace the predictors that exist in the result with the result. Any that do not exist are automatically
             # inherited from the known predictor data.
             # TODO: Test this section for input_time_steps != output_time_steps
-            if fill_in:
-                loc_dict = dict(**self._outputs_in_inputs, time_step=p_da.time_step[-es:])
-                p_da.loc[loc_dict] = r_da.loc[self._outputs_in_inputs]
+            if keep_inputs:
+                loc_dict = dict(varlev=self._outputs_in_inputs['varlev'], time_step=p_da.time_step[-es:])
+                p_da.loc[loc_dict] = r_da.loc[{'varlev': self._outputs_in_inputs['varlev']}]
             else:
                 if prefer_first_times:
-                    p_da.loc[self._outputs_in_inputs] = \
-                        r_da.loc[self._outputs_in_inputs][:, :es]
+                    p_da.loc[{'varlev': self._outputs_in_inputs['varlev']}] = \
+                        r_da.loc[{'varlev': self._outputs_in_inputs['varlev']}][:, :self._input_time_steps]
                 else:
-                    p_da.loc[self._outputs_in_inputs] = \
-                        r_da.loc[self._outputs_in_inputs][:, -es:]
+                    p_da.loc[{'varlev': self._outputs_in_inputs['varlev']}] = \
+                        r_da.loc[{'varlev': self._outputs_in_inputs['varlev']}][:, -self._input_time_steps:]
 
             if impute:
                 # Calculate mean values for the added time steps after re-indexing
-                p_da[-es:] = np.concatenate([p_mean[np.newaxis, ...]] * self._input_time_steps)
+                p_da[-es:] = np.concatenate([p_mean[np.newaxis, ...]] * es)
                 # Take care of the known insolation for added time steps
                 if self._add_insolation:
-                    p_da.loc[{'varlev': 'SOL'}][-self._input_time_steps:] = \
+                    p_da.loc[{'varlev': 'SOL'}][-es:] = \
                         np.concatenate([insolation(p_da.sample[-es:] + n * self._dt,
                                                    self.generator.ds.lat, self.generator.ds.lon)[:, np.newaxis]
                                         for n in range(self._input_time_steps)], axis=1)
@@ -250,7 +241,7 @@ class TimeSeriesEstimator(object):
             )
         else:
             # To create a correct time series, we must retain only the effective steps
-            if not fill_in:
+            if not keep_inputs:
                 if prefer_first_times:
                     result = result[:, :, :es]
             result = result.transpose((0, 2, 1, 3, 4, 5))
@@ -274,4 +265,5 @@ class TimeSeriesEstimator(object):
             var, lev = self._output_sel['variable'], self._output_sel['level']
             vl = pd.MultiIndex.from_product((var, lev), names=('variable', 'level'))
             result = result.assign_coords(varlev=vl).unstack('varlev')
+            result = result.transpose('f_hour', 'time', 'variable', 'level', 'lat', 'lon')
             return result
