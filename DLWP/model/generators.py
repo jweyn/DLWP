@@ -357,8 +357,6 @@ class SeriesDataGenerator(Sequence):
             self.da = self.ds.predictors.isel(time_step=-1)
         else:
             self.da = self.ds.predictors
-        if load:
-            self.da.load()
 
         self._input_sel = input_sel or {}
         self._output_sel = output_sel or {}
@@ -367,6 +365,9 @@ class SeriesDataGenerator(Sequence):
 
         self.input_da = self.da.sel(**self._input_sel)
         self.output_da = self.da.sel(**self._output_sel)
+        if load:
+            self.input_da.load()
+            self.output_da.load()
 
         self.on_epoch_end()
 

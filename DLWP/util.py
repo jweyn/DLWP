@@ -308,4 +308,4 @@ def insolation(dates, lat, lon, S=1.):
                np.cos(lat[None, ...]) * np.cos(dec[:, None, None]) * np.cos(h)) * rho[:, None, None] ** -2.
     sol[sol < 0.] = 0.
 
-    return sol.astype(np.float32)
+    return sol
