@@ -65,6 +65,30 @@ class BatchHistory(Callback):
             self.history[self.epoch].setdefault(k, []).append(v)
 
 
+class RunHistory(Callback):
+    """Callback that records events into a `History` object.
+
+    Adapted from keras.callbacks.History to include logging to Azure experiment runs.
+    """
+
+    def __init__(self, run):
+        self.epoch = []
+        self.history = {}
+        self.run = run
+
+    def on_train_begin(self, logs=None):
+        self.epoch = []
+        self.history = {}
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        self.epoch.append(epoch)
+        for k, v in logs.items():
+            self.history.setdefault(k, []).append(v)
+            self.run.log(k, v)
+            self.run.log_list(k, self.history[k])
+
+
 class RNNResetStates(Callback):
     def on_epoch_begin(self, epoch, logs=None):
         self.model.reset_states()

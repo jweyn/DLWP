@@ -6,52 +6,29 @@
 
 """
 Example of training a DLWP model using a dataset of predictors generated with DLWP.model.Preprocessor.
-
-Uses Microsoft Azure resources. Launch this script as an Azure experiment using 'Train on Azure.ipynb'
 """
 
-import argparse
-import os
-import shutil
 import time
+import os
 import numpy as np
 import pandas as pd
 import xarray as xr
 from datetime import datetime
 from DLWP.model import DLWPNeuralNet, SeriesDataGenerator
 from DLWP.util import save_model, train_test_split_ind
-from DLWP.custom import RNNResetStates, EarlyStoppingMin, latitude_weighted_loss, RunHistory
+from DLWP.custom import RNNResetStates, EarlyStoppingMin, latitude_weighted_loss
 from keras.regularizers import l2
 from keras.losses import mean_squared_error
-from keras.callbacks import TensorBoard
-from azureml.core import Run
-
-
-#%% Parse user arguments
-
-parser = argparse.ArgumentParser()
-parser.add_argument('--root-directory', type=str, dest='root_directory', default='.',
-                    help='Destination root data directory on Azure Blob storage')
-parser.add_argument('--predictor-file', type=str, dest='predictor_file',
-                    help='Path and name of data file in root-directory')
-parser.add_argument('--model-file', type=str, dest='model_file',
-                    help='Path and name of model save file in root-directory')
-parser.add_argument('--log-directory', type=str, dest='log_directory', default='./logs',
-                    help='Destination for log files in root-directory')
-parser.add_argument('--temp-dir', type=str, dest='temp_dir', default='None',
-                    help='If specified, copies the predictor file here for use during training (e.g., fast SSD)')
-
-args = parser.parse_args()
-if args.temp_dir != 'None':
-    os.makedirs(args.temp_dir, exist_ok=True)
+from keras.callbacks import History, TensorBoard
 
 
 #%% Parameters
 
-root_directory = args.root_directory
-predictor_file = os.path.join(root_directory, args.predictor_file)
-model_file = os.path.join(root_directory, args.model_file)
-log_directory = os.path.join(root_directory, args.log_directory)
+# File paths and names
+root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
+predictor_file = os.path.join(root_directory, 'cfs_6h_1979-2010_z500-th3-7-w700-rh850-pwat_NH_T2.nc')
+model_file = os.path.join(root_directory, 'dlwp_6h_1979-2010_z500-th3-7-w700-rh850_NH_T2_400')
+log_directory = os.path.join(root_directory, 'logs', 'pwat-w-rh-lstm')
 
 # NN parameters. Regularization is applied to LSTM layers by default. weight_loss indicates whether to weight the
 # loss function preferentially in the mid-latitudes.
@@ -87,18 +64,9 @@ validation_set = list(pd.date_range(datetime(2003, 1, 1, 0), datetime(2006, 12, 
 train_set = list(pd.date_range(datetime(1979, 1, 1, 6), datetime(2002, 12, 31, 18), freq='6H'))
 
 
-#%% Open data. If temporary file is specified, copy it there.
+#%% Open data
 
-if args.temp_dir != 'None':
-    new_predictor_file = os.path.join(args.temp_dir, args.predictor_file)
-    print('Copying predictor file to %s...' % new_predictor_file)
-    if os.path.isfile(new_predictor_file):
-        print('File already exists!')
-    else:
-        shutil.copy(predictor_file, new_predictor_file, follow_symlinks=True)
-    data = xr.open_dataset(new_predictor_file, chunks={'sample': batch_size})
-else:
-    data = xr.open_dataset(predictor_file, chunks={'sample': batch_size})
+data = xr.open_dataset(predictor_file, chunks={'sample': batch_size})
 
 if 'time_step' in data.dims:
     time_dim = data.dims['time_step']
@@ -264,8 +232,7 @@ p_fit, t_fit = (None, None)
 # Train and evaluate the model
 start_time = time.time()
 print('Begin training...')
-run = Run.get_context()
-history = RunHistory(run)
+history = History()
 early = EarlyStoppingMin(min_epochs=min_epochs, monitor='val_loss' if val_generator is not None else 'loss',
                          min_delta=0., patience=patience, restore_best_weights=True, verbose=1)
 tensorboard = TensorBoard(log_dir=log_directory, batch_size=batch_size, update_freq='epoch')

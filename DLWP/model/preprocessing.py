@@ -61,7 +61,7 @@ class Preprocessor(object):
         return (int(np.prod(self.data.predictors.shape[1:-2])),) + self.data.predictors.shape[-2:]
 
     def data_to_samples(self, time_step=1, batch_samples=100, variables='all', levels='all',
-                        pairwise=False, scale_variables=False, chunk_size=32, in_memory=False, to_zarr=False,
+                        pairwise=False, scale_variables=False, chunk_size=16, in_memory=False, to_zarr=False,
                         overwrite=False, verbose=False):
         """
         Convert the data referenced by the data_obj in __init__ to samples ready for ingestion in a DLWP model. Write
@@ -440,7 +440,7 @@ class Preprocessor(object):
         self.data = result_ds
 
     def data_to_series(self, batch_samples=100, variables='all', levels='all', pairwise=False, scale_variables=False,
-                       chunk_size=32, in_memory=False, to_zarr=False, overwrite=False, verbose=False):
+                       chunk_size=16, in_memory=False, to_zarr=False, overwrite=False, verbose=False):
         """
         Convert the data referenced by the data_obj in __init__ to a continuous time series of formatted data. This
         series of data is appropriate for use in a SeriesDataGenerator object during model training. Write data

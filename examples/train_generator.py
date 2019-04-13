@@ -5,7 +5,9 @@
 #
 
 """
-Example of training a DLWP model using a dataset of predictors generated with DLWP.model.Preprocessor.
+Example of training a DLWP model using a dataset of predictors generated with DLWP.model.Preprocessor. This example
+uses the old DataGenerator and should be considered deprecated in favor of the new example 'train.py' which takes
+advantage of the advanced configuration capabilities of Preprocessor.data_to_series() and the SeriesDataGenerator.
 """
 
 import time

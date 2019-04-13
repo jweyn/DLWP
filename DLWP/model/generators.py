@@ -8,10 +8,11 @@
 High-level APIs for building data generators. These produce batches of data on-the-fly for DLWP models'
 fit_generator() methods.
 """
+
+import warnings
 import numpy as np
 import xarray as xr
 from keras.utils import Sequence
-
 from ..util import delete_nan_samples, insolation
 
 
@@ -173,6 +174,8 @@ class SmartDataGenerator(Sequence):
         :param remove_nan: bool: if True, remove any samples with NaNs
         :param load: bool: if True, load the data in memory
         """
+        warnings.warn("SmartDataGenerator is deprecated and may be removed in the future; use "
+                      "SeriesDataGenerator instead", DeprecationWarning)
         self.model = model
         if not hasattr(ds, 'predictors'):
             raise ValueError("dataset must have 'predictors' variable")
@@ -200,6 +203,8 @@ class SmartDataGenerator(Sequence):
                                                                time_step=-1)), dim='sample')
         if load:
             self.da.load()
+        else:
+            warnings.warn('data for SeriesDataGenerator is not loaded into memory; performance may be very slow')
         self.on_epoch_end()
 
     @property
