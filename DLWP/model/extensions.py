@@ -228,9 +228,7 @@ class TimeSeriesEstimator(object):
             result = xr.DataArray(
                 result,
                 coords=[
-                    np.arange(self._output_time_steps * self._dt.values,
-                              (steps + 1) * self._output_time_steps * self._dt.values,
-                              self._output_time_steps * self._dt.values),  # fix dt for input_time_step != output
+                    np.arange(self._dt.values, (steps * es + 1) * self._dt.values, es * self._dt.values),
                     self.generator.ds.sample[:self.generator._n_sample] + (self._input_time_steps - 1) * self._dt,
                     range(self._output_time_steps),
                     self._output_sel['varlev'],
@@ -250,7 +248,7 @@ class TimeSeriesEstimator(object):
                 result,
                 coords=[
                     np.arange(self._dt.values, (steps * es + 1) * self._dt.values, self._dt.values),
-                    self.generator.ds.sample[:self.generator._n_sample] + (es - 1) * self._dt,
+                    self.generator.ds.sample[:self.generator._n_sample] + (self._input_time_steps - 1) * self._dt,
                     self._output_sel['varlev'],
                     self.generator.ds.lat,
                     self.generator.ds.lon

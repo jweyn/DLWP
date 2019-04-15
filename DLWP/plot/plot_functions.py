@@ -11,7 +11,6 @@ a bit cleaner to place them here than have plotting functions defined in every u
 
 import numpy as np
 from matplotlib import pyplot as plt
-from mpl_toolkits.basemap import Basemap
 from .util import remove_chars
 
 
@@ -204,6 +203,7 @@ def forecast_example_plot(base, verif, forecast, f_hour, model_name='', plot_dif
     :return: plt.Figure
     """
     # Plot an example forecast
+    from mpl_toolkits.basemap import Basemap
     lons, lats = np.meshgrid(base.lon, base.lat)
     fig = plt.figure()
     fig.set_size_inches(9, 9)

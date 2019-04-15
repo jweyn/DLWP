@@ -9,7 +9,9 @@ Methods for validating DLWP forecasts.
 """
 
 import numpy as np
+import pandas as pd
 import xarray as xr
+from datetime import timedelta
 
 
 def forecast_error(forecast, valid, method='mse', axis=None):
@@ -31,17 +33,17 @@ def forecast_error(forecast, valid, method='mse', axis=None):
         if axis is None:
             axis = tuple(range(1, len(valid.shape)))
         if method == 'mse':
-            return np.mean((valid - forecast) ** 2., axis=axis)
+            return np.nanmean((valid - forecast) ** 2., axis=axis)
         elif method == 'mae':
-            return np.mean(np.abs(valid - forecast), axis=axis)
+            return np.nanmean(np.abs(valid - forecast), axis=axis)
     else:
         n_val = valid.shape[0]
         me = []
         for f in range(n_f):
             if method == 'mse':
-                me.append(np.mean((valid[f:] - forecast[f, :(n_val - f)]) ** 2., axis=axis))
+                me.append(np.nanmean((valid[f:] - forecast[f, :(n_val - f)]) ** 2., axis=axis))
             elif method == 'mae':
-                me.append(np.mean(np.abs(valid[f:] - forecast[f, :(n_val - f)]), axis=axis))
+                me.append(np.nanmean(np.abs(valid[f:] - forecast[f, :(n_val - f)]), axis=axis))
         return np.array(me)
 
 
@@ -63,9 +65,9 @@ def persistence_error(predictors, valid, n_fhour, method='mse', axis=None):
     me = []
     for f in range(n_fhour):
         if method == 'mse':
-            me.append(np.mean((valid[f:] - predictors[:(n_f - f)]) ** 2., axis=axis))
+            me.append(np.nanmean((valid[f:] - predictors[:(n_f - f)]) ** 2., axis=axis))
         elif method == 'mae':
-            me.append(np.mean(np.abs(valid[f:] - predictors[:(n_f - f)]), axis=axis))
+            me.append(np.nanmean(np.abs(valid[f:] - predictors[:(n_f - f)]), axis=axis))
     return np.array(me)
 
 
@@ -86,9 +88,9 @@ def climo_error(valid, n_fhour, method='mse', axis=None):
     me = []
     for f in range(n_fhour):
         if method == 'mse':
-            me.append(np.mean((valid[:(n_f - f)] - np.mean(valid, axis=0)) ** 2., axis=axis))
+            me.append(np.nanmean((valid[:(n_f - f)] - np.nanmean(valid, axis=0)) ** 2., axis=axis))
         elif method == 'mae':
-            me.append(np.mean(np.abs(valid[:(n_f - f)] - np.mean(valid, axis=0)), axis=axis))
+            me.append(np.nanmean(np.abs(valid[:(n_f - f)] - np.nanmean(valid, axis=0)), axis=axis))
     return np.array(me)
 
 
@@ -186,5 +188,76 @@ def add_metadata_to_forecast(forecast, f_hour, meta_ds):
     return forecast
 
 
-def generate_verification():
-    pass
+def verification_from_samples(ds, all_ds=None, forecast_steps=1, dt=6):
+    """
+    Generate a DataArray of forecast verification from a validation DataSet built using Preprocessor.data_to_samples().
+
+    :param ds: xarray.Dataset: dataset of verification data
+    :param all_ds: xarray.Dataset: optional Dataset containing the same variables/levels/lat/lon as val_ds but
+        including more time steps for more robust handling of data at times outside of the validation selection
+    :param forecast_steps: int: number of forward forecast iterations
+    :param dt: int: forecast time step in hours
+    :return: xarray.DataArray: verification with forecast hour as the first dimension
+    """
+    forecast_steps = int(forecast_steps)
+    if dt < 1:
+        raise ValueError("'forecast_steps' must be an integer >= 1")
+    dt = int(dt)
+    if dt < 1:
+        raise ValueError("'dt' must be an integer >= 1")
+    dims = [d for d in ds.predictors.dims if d.lower() != 'time_step']
+    f_hour = np.arange(dt, dt * forecast_steps + 1, dt)
+    verification = xr.DataArray(
+        np.full([forecast_steps] + [ds.dims[d] for d in dims], np.nan, dtype=np.float32),
+        coords=[f_hour] + [ds[d] for d in dims],
+        dims=['f_hour'] + dims
+    )
+    if all_ds is not None:
+        valid_da = all_ds.targets.isel(time_step=0)
+    else:
+        valid_da = ds.targets.isel(time_step=0)
+    for d, date in enumerate(ds.sample.values[:]):
+        verification[:, d] = valid_da.reindex(
+            sample=pd.date_range(date, date + np.timedelta64(timedelta(hours=dt * (forecast_steps - 1))),
+                                 freq='%sH' % int(dt)),
+            method=None
+        ).values
+    return verification
+
+
+def verification_from_series(ds, all_ds=None, forecast_steps=1, dt=6):
+    """
+    Generate a DataArray of forecast verification from a validation DataSet built using Preprocessor.data_to_series().
+
+    :param ds: xarray.Dataset: dataset of verification data
+    :param all_ds: xarray.Dataset: optional Dataset containing the same variables/levels/lat/lon as val_ds but
+        including more time steps for more robust handling of data at times outside of the validation selection
+    :param forecast_steps: int: number of forward forecast iterations
+    :param dt: int: forecast time step in hours
+    :return: xarray.DataArray: verification with forecast hour as the first dimension
+    """
+    forecast_steps = int(forecast_steps)
+    if dt < 1:
+        raise ValueError("'forecast_steps' must be an integer >= 1")
+    dt = int(dt)
+    if dt < 1:
+        raise ValueError("'dt' must be an integer >= 1")
+    dims = [d for d in ds.predictors.dims if d.lower() != 'time_step']
+    f_hour = np.arange(dt, dt * forecast_steps + 1, dt)
+    verification = xr.DataArray(
+        np.full([forecast_steps] + [ds.dims[d] for d in dims], np.nan, dtype=np.float32),
+        coords=[f_hour] + [ds[d] for d in dims],
+        dims=['f_hour'] + dims
+    )
+    if all_ds is not None:
+        valid_da = all_ds.predictors
+    else:
+        valid_da = ds.predictors
+    for d, date in enumerate(ds.sample[:]):
+        verification[:, d] = valid_da.reindex(
+            sample=pd.date_range(date + np.timedelta64(timedelta(hours=dt)),
+                                 date + np.timedelta64(timedelta(hours=dt * (forecast_steps - 1))),
+                                 freq='%sH' % int(dt)),
+            method=None
+        ).values
+    return verification
