@@ -185,6 +185,7 @@ class TimeSeriesEstimator(object):
         # Iterate prediction forward
         for s in range(steps):
             result[s] = self.model.predict(p_da.values.reshape(p_shape), **kwargs)
+
             # Add metadata to the prediction
             r_da = xr.DataArray(
                 result[s].reshape((p_shape[0], self._output_time_steps, -1,) +
@@ -194,11 +195,24 @@ class TimeSeriesEstimator(object):
                         self.generator.ds.lat, self.generator.ds.lon],
                 dims=['sample', 'time_step', 'varlev', 'lat', 'lon']
             )
+
             # Re-index the predictors to the new forward time step
             p_da = p_da.reindex(sample=r_da.sample, method=None)
+
+            # Impute values extending beyond data availability
+            if impute:
+                # Calculate mean values for the added time steps after re-indexing
+                p_da[-es:] = np.concatenate([p_mean[np.newaxis, ...]] * es)
+
+            # Take care of the known insolation for added time steps
+            if self._add_insolation:
+                p_da.loc[{'varlev': 'SOL'}][-es:] = \
+                    np.concatenate([insolation(p_da.sample[-es:] + n * self._dt,
+                                               self.generator.ds.lat, self.generator.ds.lon)[:, np.newaxis]
+                                    for n in range(self._input_time_steps)], axis=1)
+
             # Replace the predictors that exist in the result with the result. Any that do not exist are automatically
-            # inherited from the known predictor data.
-            # TODO: Test this section for input_time_steps != output_time_steps
+            # inherited from the known predictor data (or imputed data).
             if keep_inputs:
                 loc_dict = dict(varlev=self._outputs_in_inputs['varlev'], time_step=p_da.time_step[-es:])
                 p_da.loc[loc_dict] = r_da.loc[{'varlev': self._outputs_in_inputs['varlev']}]
@@ -209,16 +223,6 @@ class TimeSeriesEstimator(object):
                 else:
                     p_da.loc[{'varlev': self._outputs_in_inputs['varlev']}] = \
                         r_da.loc[{'varlev': self._outputs_in_inputs['varlev']}][:, -self._input_time_steps:]
-
-            if impute:
-                # Calculate mean values for the added time steps after re-indexing
-                p_da[-es:] = np.concatenate([p_mean[np.newaxis, ...]] * es)
-                # Take care of the known insolation for added time steps
-                if self._add_insolation:
-                    p_da.loc[{'varlev': 'SOL'}][-es:] = \
-                        np.concatenate([insolation(p_da.sample[-es:] + n * self._dt,
-                                                   self.generator.ds.lat, self.generator.ds.lon)[:, np.newaxis]
-                                        for n in range(self._input_time_steps)], axis=1)
 
         # Return a DataArray. Keep the actual model initialization, that is, the last available time in the inputs,
         # as the time

@@ -86,7 +86,6 @@ class RunHistory(Callback):
         for k, v in logs.items():
             self.history.setdefault(k, []).append(v)
             self.run.log(k, v)
-            self.run.log_list(k, self.history[k])
 
 
 class RNNResetStates(Callback):
