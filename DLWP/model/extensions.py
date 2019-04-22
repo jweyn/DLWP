@@ -184,6 +184,8 @@ class TimeSeriesEstimator(object):
 
         # Iterate prediction forward
         for s in range(steps):
+            if 'verbose' in kwargs and kwargs['verbose'] > 0:
+                print('Time step %d/%d' % (s + 1, steps))
             result[s] = self.model.predict(p_da.values.reshape(p_shape), **kwargs)
 
             # Add metadata to the prediction

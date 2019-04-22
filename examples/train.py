@@ -27,13 +27,13 @@ from keras.callbacks import History, TensorBoard
 # File paths and names
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
 predictor_file = os.path.join(root_directory, 'cfs_6h_1979-2010_z500-th3-7-w700-rh850-pwat_NH_T2.nc')
-model_file = os.path.join(root_directory, 'dlwp_6h_1979-2010_z500-th3-7-w700-rh850_NH_T2_400')
-log_directory = os.path.join(root_directory, 'logs', 'pwat-w-rh-lstm')
+model_file = os.path.join(root_directory, 'dlwp_6h_z500-th3-7-pwat_NH_T2')
+log_directory = os.path.join(root_directory, 'logs', 'pwat')
 
 # NN parameters. Regularization is applied to LSTM layers by default. weight_loss indicates whether to weight the
 # loss function preferentially in the mid-latitudes.
 model_is_convolutional = True
-model_is_recurrent = True
+model_is_recurrent = False
 min_epochs = 200
 max_epochs = 1000
 patience = 50
@@ -126,19 +126,19 @@ cs = generator.convolution_shape
 cso = generator.output_convolution_shape
 layers = (
     # --- These layers add a convolutional LSTM at the beginning --- #
-    ('Reshape', (generator.shape_2d,), {'input_shape': cs}),
-    ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
-    ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
-    ('Reshape', ((cs[0], cs[1], cs[2] + 4, cs[3] + 4),), None),
-    ('ConvLSTM2D', (4 * cs[1], 3), {
-        'dilation_rate': 2,
-        'padding': 'valid',
-        'data_format': 'channels_first',
-        'activation': 'tanh',
-        'return_sequences': True,
-        'kernel_regularizer': l2(lambda_)
-    }),
-    ('Reshape', ((4 * cs[0] * cs[1], cs[2], cs[3]),), None),
+    # ('Reshape', (generator.shape_2d,), {'input_shape': cs}),
+    # ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
+    # ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
+    # ('Reshape', ((cs[0], cs[1], cs[2] + 4, cs[3] + 4),), None),
+    # ('ConvLSTM2D', (4 * cs[1], 3), {
+    #     'dilation_rate': 2,
+    #     'padding': 'valid',
+    #     'data_format': 'channels_first',
+    #     'activation': 'tanh',
+    #     'return_sequences': True,
+    #     'kernel_regularizer': l2(lambda_)
+    # }),
+    # ('Reshape', ((4 * cs[0] * cs[1], cs[2], cs[3]),), None),
     # -------------------------------------------------------------- #
     ('PeriodicPadding2D', ((0, 2),), {
         'data_format': 'channels_first',
@@ -195,12 +195,12 @@ layers = (
     ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
     ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
     # --- Change the number of filters to cso[0] * cso[1] for LSTM model --- #
-    ('Conv2D', (cso[0] * cso[1], 5), {
+    ('Conv2D', (cso[0], 5), {
         'padding': 'valid',
         'activation': 'linear',
         'data_format': 'channels_first'
     }),
-    ('Reshape', (cso,), None)
+    # ('Reshape', (cso,), None)
 )
 
 # Example custom loss function: pass to loss= in build_model()

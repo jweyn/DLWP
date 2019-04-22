@@ -74,6 +74,10 @@ variable_sel = {
 scale_variables = True
 scale_factor = 0.1
 
+# Models which use up-sampling need to have an even number of latitudes. This is usually done by cropping out the
+# north pole. Set this option to do that.
+crop_north_pole = True
+
 # Latitude / Longitude limits
 latitude_range = [20., 80.]
 longitude_range = [220., 300.]
@@ -87,15 +91,21 @@ contour_range = [480, 600]
 contour_step = 6
 error_maxmin = 20
 
+# Add a Laplacian to the forecast maps (e.g., vorticity)
+plot_laplace = True
+laplace_colormap = 'seismic'
+laplace_range = [-3., 3.]
+laplace_scale = 1.e4 * 9.81 / (2 * 7.29e-5)
+
 # Output file and other small details
 plot_directory = './Plots'
-plot_file_name = 'MAP_FINAL_ANAL_24'
+plot_file_name = 'MAP_Z_VORT_ANAL_24'
 plot_file_type = 'pdf'
 
 
 #%% Plot function
 
-def make_plot(m, time, init, verif, forecasts, model_names, skip_plots=(), file_name=None):
+def make_plot(m, time, init, verif, forecasts, model_names, fill=None, skip_plots=(), file_name=None):
     num_panels = len(forecasts) + 2
     num_cols = int(np.ceil(num_panels / 2))
     verif_time = time + timedelta(hours=plot_forecast_hour)
@@ -108,14 +118,20 @@ def make_plot(m, time, init, verif, forecasts, model_names, skip_plots=(), file_
     plot_fn = getattr(m, plot_type)
     contours = np.arange(np.min(contour_range), np.max(contour_range), contour_step)
     diff = None
+    if fill is None:
+        fill = [None] * (len(forecasts) + 2)
 
-    def plot_panel(n, da, title):
+    def plot_panel(n, da, title, filler):
         ax = plt.subplot(gs1[n])
         lons, lats = np.meshgrid(da.lon, da.lat)
         x, y = m(lons, lats)
         m.drawcoastlines(color=(0.7, 0.7, 0.7))
         m.drawparallels(np.arange(0., 91., 30.))
         m.drawmeridians(np.arange(0., 361., 60.))
+        if filler is not None:
+            m.pcolormesh(x, y, filler.values, vmin=np.min(laplace_range), vmax=np.max(laplace_range),
+                         cmap=laplace_colormap)
+            # plt.colorbar()
         if diff is not None:
             m.pcolormesh(x, y, da.values - diff.values, vmin=-error_maxmin, vmax=error_maxmin, cmap='seismic',
                          alpha=0.4)
@@ -124,15 +140,15 @@ def make_plot(m, time, init, verif, forecasts, model_names, skip_plots=(), file_
         plt.clabel(cs, fmt='%1.0f')
         ax.text(0.01, 0.01, title, horizontalalignment='left', verticalalignment='bottom', transform=ax.transAxes)
 
-    plot_panel(0, init, 'a) Initial (%s)' % datetime.strftime(time, '%HZ %e %b %Y'))
-    plot_panel(1, verif, 'b) Verification (%s)' % datetime.strftime(verif_time, '%HZ %e %b %Y'))
+    plot_panel(0, init, 'a) Initial (%s)' % datetime.strftime(time, '%HZ %e %b %Y'), fill[0])
+    plot_panel(1, verif, 'b) Verification (%s)' % datetime.strftime(verif_time, '%HZ %e %b %Y'), fill[1])
     plot_num = 2
+    if plot_errors and not plot_laplace:
+        diff = verif
     for f, forecast in enumerate(forecasts):
         if f + 2 in skip_plots:
             plot_num += 1
-        if plot_errors is not None:
-            diff = verif
-        plot_panel(plot_num, forecast, '%s) %s' % (string.ascii_lowercase[f+2], model_names[f]))
+        plot_panel(plot_num, forecast, '%s) %s' % (string.ascii_lowercase[f+2], model_names[f]), fill[f+2])
         plot_num += 1
 
     if file_name is not None:
@@ -140,10 +156,37 @@ def make_plot(m, time, init, verif, forecasts, model_names, skip_plots=(), file_
     plt.show()
 
 
+def add_pole(da):
+    pole = da.sel(lat=da.lat.max()).mean('lon').drop('lat')
+    pole = pole.expand_dims(dim='lat', axis=-1).assign_coords(lat=[90.])
+    pole = xr.concat([pole.expand_dims(dim='lon', axis=-1).assign_coords(lon=[l]) for l in da.lon], dim='lon')
+    result = xr.concat([pole, da], dim='lat')
+    return result
+
+
+def add_southern_hemisphere(da):
+    da_s = da.assign_coords(lat=(-1. * da.lat.values))
+    result = xr.concat([da, da_s.sel(lat=(da_s.lat < 0.0)).isel(lat=slice(None, None, -1))], dim='lat')
+    return result
+
+
+def laplacian(da, engine):
+    a = da.values.reshape(-1, da.sizes['lat'], da.sizes['lon'])
+    a = a.transpose((1, 2, 0))
+    n = engine.wavenumbers[1] + 1.
+    factor = -1 * n * (n + 1) / (engine.radius ** 2.)
+    result = engine.spec_to_grid(factor[:, None] * engine.grid_to_spec(a))
+    result = result.transpose((2, 0, 1))
+    return result.reshape(da.shape)
+
+
 #%% Load the data
 
 if not isinstance(plot_dates, list):
     plot_dates = [plot_dates]
+
+if plot_laplace:
+    from DLWP.barotropic.pyspharm_transforms import TransformsEngine
 
 # Add verification dates to the dataset
 sel_dates = list(plot_dates)
@@ -153,10 +196,8 @@ for date in plot_dates:
         sel_dates.append(verif_date)
 sel_dates.sort()
 
-# Use the predictor file as a wrapper
-processor = Preprocessor(None, predictor_file=predictor_file)
-processor.open()
-dataset = processor.data.sel(sample=np.array(sel_dates, dtype='datetime64'))
+data = xr.open_dataset(predictor_file)
+data = data.sel(sample=np.array(sel_dates, dtype='datetime64'))
 
 lat_min = np.min(latitude_range)
 lat_max = np.max(latitude_range)
@@ -164,13 +205,17 @@ lon_min = np.min(longitude_range)
 lon_max = np.max(longitude_range)
 
 # Get the mean and std of the data
-variable_mean = dataset.sel(**variable_sel).variables['mean'].values
-variable_std = dataset.sel(**variable_sel).variables['std'].values
+variable_mean = data.sel(**variable_sel).variables['mean'].values
+variable_std = data.sel(**variable_sel).variables['std'].values
 
 
 #%% Make forecasts
 
 model_forecasts = []
+if plot_laplace:
+    laplace_forecasts = []
+else:
+    laplace_fill = None
 num_forecast_steps = int(np.ceil(plot_forecast_hour / model_dt))
 f_hour = np.arange(model_dt, num_forecast_steps * model_dt + 1, model_dt)
 dlwp, p_val, t_val = None, None, None
@@ -179,12 +224,12 @@ for mod, model in enumerate(models):
     print('Loading model %s...' % model)
     dlwp, history = load_model('%s/%s' % (root_directory, model), True)
 
-    # Create data generators. If the model has upsampling, remove a latitude index if the number of latitudes is odd
+    # Create data generator
     if predictor_sel[mod] is not None:
-        val_ds = dataset.sel(**predictor_sel[mod])
+        val_ds = data.sel(**predictor_sel[mod])
     else:
-        val_ds = dataset.copy()
-    if 'upsample' in model.lower() or 'final' in model.lower():
+        val_ds = data.copy()
+    if crop_north_pole:
         val_ds = val_ds.isel(lat=(val_ds.lat < 90.0))
     val_generator = DataGenerator(dlwp, val_ds, batch_size=216)
     p_val, t_val = val_generator.generate([], scale_and_impute=False)
@@ -196,9 +241,30 @@ for mod, model in enumerate(models):
         time_series = time_series * variable_std + variable_mean
     time_series = verify.add_metadata_to_forecast(time_series, f_hour, val_ds)
 
+    # Take the Laplacian if vorticity is desired
+    time_series = time_series.sel(**variable_sel)
+    if plot_laplace:
+        if not scale_variables:
+            lap_series = time_series * variable_std + variable_mean
+        else:
+            lap_series = time_series.copy()
+
+        # Fix missing poles and flip over the equator to add the southern hemisphere back in
+        if crop_north_pole:
+            lap_series = add_pole(lap_series)
+        lap_series = add_southern_hemisphere(lap_series)
+
+        # Transform engine
+        transform = TransformsEngine(lap_series.sizes['lon'], lap_series.sizes['lat'],
+                                     2 * (lap_series.sizes['lat'] // 2))
+        lap_series[:] = laplacian(lap_series, transform)
+        lap_series = lap_series.sel(lat=((lap_series.lat >= lat_min) & (lap_series.lat <= lat_max)),
+                                    lon=((lap_series.lon >= lon_min) & (lap_series.lon <= lon_max)))
+
+        laplace_forecasts.append(laplace_scale * lap_series)
+
     # Slice the array as we want it
-    time_series = time_series.sel(**variable_sel,
-                                  lat=((time_series.lat >= lat_min) & (time_series.lat <= lat_max)),
+    time_series = time_series.sel(lat=((time_series.lat >= lat_min) & (time_series.lat <= lat_max)),
                                   lon=((time_series.lon >= lon_min) & (time_series.lon <= lon_max)))
 
     model_forecasts.append(scale_factor * time_series)
@@ -211,13 +277,18 @@ for mod, model in enumerate(models):
 #%% Add the barotropic model
 
 if baro_ds is not None:
-    baro = baro_ds.sel(f_hour=(baro_ds.f_hour <= plot_forecast_hour), time=plot_dates,
-                       lat=((baro_ds.lat >= lat_min) & (baro_ds.lat <= lat_max)),
-                       lon=((baro_ds.lon >= lon_min) & (baro_ds.lon <= lon_max)))
+    baro = baro_ds['Z'].sel(f_hour=(baro_ds.f_hour <= plot_forecast_hour), time=plot_dates)
     baro.load()
+    if plot_laplace:
+        baro_lap = xr.DataArray(laplacian(baro, transform), coords=baro.coords)
+        baro_lap = baro_lap.sel(lat=((baro_ds.lat >= lat_min) & (baro_ds.lat <= lat_max)),
+                                lon=((baro_ds.lon >= lon_min) & (baro_ds.lon <= lon_max)))
+        laplace_forecasts.append(laplace_scale * baro_lap)
+    baro = baro.sel(lat=((baro_ds.lat >= lat_min) & (baro_ds.lat <= lat_max)),
+                    lon=((baro_ds.lon >= lon_min) & (baro_ds.lon <= lon_max)))
     if not scale_variables:
-        baro['Z'][:] = (baro['Z'] - variable_mean) / variable_std
-    model_forecasts.append(scale_factor * baro['Z'])
+        baro = (baro - variable_mean) / variable_std
+    model_forecasts.append(scale_factor * baro)
     model_labels.append('Barotropic')
 
 
@@ -226,13 +297,18 @@ if baro_ds is not None:
 if cfs is not None:
     cfs.set_dates(sel_dates)
     cfs.open()
-    cfs_ds = cfs.Dataset.sel(f_hour=(cfs.Dataset.f_hour <= plot_forecast_hour), time=plot_dates,
-                             lat=((cfs.Dataset.lat >= lat_min) & (cfs.Dataset.lat <= lat_max)),
-                             lon=((cfs.Dataset.lon >= lon_min) & (cfs.Dataset.lon <= lon_max)))
-    cfs_ds.load()
+    cfs_da = cfs.Dataset['z500'].sel(f_hour=(cfs.Dataset.f_hour <= plot_forecast_hour), time=plot_dates)
+    cfs_da.load()
+    if plot_laplace:
+        cfs_lap = xr.DataArray(laplacian(cfs_da, transform), coords=cfs_da.coords)
+        cfs_lap = cfs_lap.sel(lat=((cfs_lap.lat >= lat_min) & (cfs_lap.lat <= lat_max)),
+                              lon=((cfs_lap.lon >= lon_min) & (cfs_lap.lon <= lon_max)))
+        laplace_forecasts.append(laplace_scale * cfs_lap)
+    cfs_da = cfs_da.sel(lat=((cfs_da.lat >= lat_min) & (cfs_da.lat <= lat_max)),
+                        lon=((cfs_da.lon >= lon_min) & (cfs_da.lon <= lon_max)))
     if not scale_variables:
-        cfs_ds['z500'][:] = (cfs_ds['z500'] - variable_mean) / variable_std
-    model_forecasts.append(scale_factor * cfs_ds['z500'])
+        cfs_da = (cfs_da - variable_mean) / variable_std
+    model_forecasts.append(scale_factor * cfs_da)
     model_labels.append('CFS')
 
 
@@ -244,6 +320,8 @@ basemap = Basemap(llcrnrlon=lon_min, llcrnrlat=lat_min, urcrnrlon=lon_max, urcrn
 # Rearrange so that Baro/CFS are at the beginning
 model_labels = model_labels[mod+1:] + model_labels[:mod+1]
 model_forecasts = model_forecasts[mod+1:] + model_forecasts[:mod+1]
+if plot_laplace:
+    laplace_forecasts = laplace_forecasts[mod + 1:] + laplace_forecasts[:mod + 1]
 
 for date in plot_dates:
     print('Plotting for %s...' % date)
@@ -252,21 +330,36 @@ for date in plot_dates:
 
     plot_fields = [f.sel(f_hour=plot_forecast_hour, time=date64) for f in model_forecasts]
 
-    init_data = dataset['predictors'].isel(time_step=-1).sel(
-        sample=date64, **variable_sel,
-        lat=((dataset.lat >= lat_min) & (dataset.lat <= lat_max)),
-        lon=((dataset.lon >= lon_min) & (dataset.lon <= lon_max)))
-    verif_data = dataset['predictors'].isel(time_step=-1).sel(
-        sample=verif_date64, **variable_sel,
-        lat=((dataset.lat >= lat_min) & (dataset.lat <= lat_max)),
-        lon=((dataset.lon >= lon_min) & (dataset.lon <= lon_max)))
-
+    init_data = data['predictors'].isel(time_step=-1).sel(sample=date64, **variable_sel)
+    verif_data = data['predictors'].isel(time_step=-1).sel(sample=verif_date64, **variable_sel)
     if scale_variables:
         init_data = init_data * variable_std + variable_mean
         verif_data = verif_data * variable_std + variable_mean
+    if plot_laplace:
+        if not scale_variables:
+            init_lap = init_data * variable_std + variable_mean
+            verif_lap = verif_data * variable_std + variable_mean
+        else:
+            init_lap = init_data.copy()
+            verif_lap = verif_data.copy()
+        init_lap = add_southern_hemisphere(init_lap)
+        verif_lap = add_southern_hemisphere(verif_lap)
+        init_lap[:] = laplace_scale * laplacian(init_lap, transform)
+        verif_lap[:] = laplace_scale * laplacian(verif_lap, transform)
+        init_lap = init_lap.sel(lat=((init_lap.lat >= lat_min) & (init_lap.lat <= lat_max)),
+                                lon=((init_lap.lon >= lon_min) & (init_lap.lon <= lon_max)))
+        verif_lap = verif_lap.sel(lat=((verif_lap.lat >= lat_min) & (verif_lap.lat <= lat_max)),
+                                  lon=((verif_lap.lon >= lon_min) & (verif_lap.lon <= lon_max)))
+        laplace_fill = [f.sel(f_hour=plot_forecast_hour, time=date64) for f in laplace_forecasts]
+        laplace_fill = [init_lap, verif_lap] + laplace_fill
+
+    init_data = init_data.sel(lat=((init_data.lat >= lat_min) & (init_data.lat <= lat_max)),
+                              lon=((init_data.lon >= lon_min) & (init_data.lon <= lon_max)))
+    verif_data = verif_data.sel(lat=((verif_data.lat >= lat_min) & (verif_data.lat <= lat_max)),
+                                lon=((verif_data.lon >= lon_min) & (verif_data.lon <= lon_max)))
 
     file_name_complete = '%s/%s_%s.%s' % (plot_directory, plot_file_name, datetime.strftime(date, '%Y%m%d%H'),
                                           plot_file_type)
 
     make_plot(basemap, date, scale_factor * init_data, scale_factor * verif_data,
-              plot_fields, model_labels, file_name=file_name_complete)
+              plot_fields, model_labels, fill=laplace_fill, file_name=file_name_complete)

@@ -61,7 +61,7 @@ class Preprocessor(object):
         return (int(np.prod(self.data.predictors.shape[1:-2])),) + self.data.predictors.shape[-2:]
 
     def data_to_samples(self, time_step=1, batch_samples=100, variables='all', levels='all',
-                        pairwise=False, scale_variables=False, chunk_size=16, in_memory=False, to_zarr=False,
+                        pairwise=False, scale_variables=False, chunk_size=64, in_memory=False, to_zarr=False,
                         overwrite=False, verbose=False):
         """
         Convert the data referenced by the data_obj in __init__ to samples ready for ingestion in a DLWP model. Write
@@ -221,10 +221,10 @@ class Preprocessor(object):
             # Create predictors and targets variables
             if pairwise:
                 dims = ('sample', 'time_step', 'varlev', 'lat', 'lon')
-                chunks = (chunk_size, time_step, n_var, n_lat, n_lon)
+                chunks = (chunk_size, 1, 1, n_lat, n_lon)
             else:
                 dims = ('sample', 'time_step', 'variable', 'level', 'lat', 'lon')
-                chunks = (chunk_size, time_step, n_var, n_level, n_lat, n_lon)
+                chunks = (chunk_size, 1, 1, 1, n_lat, n_lon)
             predictors = nc_fid.createVariable('predictors', np.float32, dims, chunksizes=chunks)
             predictors.setncatts({
                 'long_name': 'Predictors',
@@ -440,7 +440,7 @@ class Preprocessor(object):
         self.data = result_ds
 
     def data_to_series(self, batch_samples=100, variables='all', levels='all', pairwise=False, scale_variables=False,
-                       chunk_size=16, in_memory=False, to_zarr=False, overwrite=False, verbose=False):
+                       chunk_size=64, in_memory=False, to_zarr=False, overwrite=False, verbose=False):
         """
         Convert the data referenced by the data_obj in __init__ to a continuous time series of formatted data. This
         series of data is appropriate for use in a SeriesDataGenerator object during model training. Write data
@@ -596,10 +596,10 @@ class Preprocessor(object):
             # Create predictors and targets variables
             if pairwise:
                 dims = ('sample', 'varlev', 'lat', 'lon')
-                chunks = (chunk_size, n_var, n_lat, n_lon)
+                chunks = (chunk_size, 1, n_lat, n_lon)
             else:
                 dims = ('sample', 'variable', 'level', 'lat', 'lon')
-                chunks = (chunk_size, n_var, n_level, n_lat, n_lon)
+                chunks = (chunk_size, 1, 1, n_lat, n_lon)
             predictors = nc_fid.createVariable('predictors', np.float32, dims, chunksizes=chunks)
             predictors.setncatts({
                 'long_name': 'Predictors',
@@ -616,7 +616,6 @@ class Preprocessor(object):
                 predictors = np.full((n_sample, n_var, n_lat, n_lon), np.nan, dtype=np.float32)
             else:
                 predictors = np.full((n_sample, n_var, n_level, n_lat, n_lon), np.nan, dtype=np.float32)
-            targets = predictors.copy()
 
         # Fill in the data. Go through time steps. Iterate by variable and level for scaling.
         if pairwise:

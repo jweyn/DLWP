@@ -56,7 +56,7 @@ log_directory = os.path.join(root_directory, args.log_directory)
 # NN parameters. Regularization is applied to LSTM layers by default. weight_loss indicates whether to weight the
 # loss function preferentially in the mid-latitudes.
 model_is_convolutional = True
-model_is_recurrent = True
+model_is_recurrent = False
 min_epochs = 200
 max_epochs = 1000
 patience = 50
@@ -67,18 +67,22 @@ weight_loss = False
 # Data parameters. Specify the input variables/levels, output variables/levels, and time steps in/out. Note that for
 # LSTM layers, the model can only predict effectively if the output time steps is 1 or equal to the input time steps.
 # Ensure that the selections use LISTS of values (even for only 1) to keep dimensions correct.
-input_selection = {'varlev': ['HGT/500', 'THICK/300-700', 'P WAT/0']}
-output_selection = {'varlev': ['HGT/500']}
+input_selection = {'varlev': ['HGT/500', 'THICK/300-700']}
+output_selection = {'varlev': ['HGT/500', 'THICK/300-700']}
 input_time_steps = 2
 output_time_steps = 2
 # Option to crop the north pole. Necessary for getting an even number of latitudes for up-sampling layers.
 crop_north_pole = True
 # Add incoming solar radiation forcing
-add_solar = True
+add_solar = False
 
 # If system memory permits, loading the predictor data can greatly increase efficiency when training on GPUs, if the
 # train computation takes less time than the data loading.
-load_memory = True
+load_memory = False
+
+# Force use of the keras model.fit() method. Currently investigating why model.fit() produces better weights than
+# model.fit_generator(). Note that this uses 2 * input_time_steps * output_time_steps times more memory.
+use_keras_fit = True
 
 # Validation set to use. Either an integer (number of validation samples, taken from the end), or an iterable of
 # pandas datetime objects. The train set can be set to the first <integer> samples, an iterable of dates, or None to
@@ -143,12 +147,17 @@ if load_memory:
 generator = SeriesDataGenerator(dlwp, train_data, input_sel=input_selection, output_sel=output_selection,
                                 input_time_steps=input_time_steps, output_time_steps=output_time_steps,
                                 batch_size=batch_size, add_insolation=add_solar, load=load_memory)
+p_train, t_train = generator.generate([])
 if validation_data is not None:
     val_generator = SeriesDataGenerator(dlwp, validation_data, input_sel=input_selection, output_sel=output_selection,
                                         input_time_steps=input_time_steps, output_time_steps=output_time_steps,
                                         batch_size=batch_size, add_insolation=add_solar, load=load_memory)
+    if use_keras_fit:
+        val = val_generator.generate([])
 else:
     val_generator = None
+    if use_keras_fit:
+        val = None
 
 
 #%% Compile the model structure with some generator data information
@@ -158,19 +167,19 @@ cs = generator.convolution_shape
 cso = generator.output_convolution_shape
 layers = (
     # --- These layers add a convolutional LSTM at the beginning --- #
-    ('Reshape', (generator.shape_2d,), {'input_shape': cs}),
-    ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
-    ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
-    ('Reshape', ((cs[0], cs[1], cs[2] + 4, cs[3] + 4),), None),
-    ('ConvLSTM2D', (4 * cs[1], 3), {
-        'dilation_rate': 2,
-        'padding': 'valid',
-        'data_format': 'channels_first',
-        'activation': 'tanh',
-        'return_sequences': True,
-        'kernel_regularizer': l2(lambda_)
-    }),
-    ('Reshape', ((4 * cs[0] * cs[1], cs[2], cs[3]),), None),
+    # ('Reshape', (generator.shape_2d,), {'input_shape': cs}),
+    # ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
+    # ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
+    # ('Reshape', ((cs[0], cs[1], cs[2] + 4, cs[3] + 4),), None),
+    # ('ConvLSTM2D', (4 * cs[1], 3), {  # 4 * cs[1]
+    #     'dilation_rate': 2,
+    #     'padding': 'valid',
+    #     'data_format': 'channels_first',
+    #     'activation': 'tanh',
+    #     'return_sequences': True,
+    #     'kernel_regularizer': l2(lambda_)
+    # }),
+    # ('Reshape', ((4 * cs[1] * cs[0], cs[2], cs[3]),), None),  # 4 * cs[0] * cs[1]
     # -------------------------------------------------------------- #
     ('PeriodicPadding2D', ((0, 2),), {
         'data_format': 'channels_first',
@@ -227,12 +236,12 @@ layers = (
     ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
     ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
     # --- Change the number of filters to cso[0] * cso[1] for LSTM model --- #
-    ('Conv2D', (cso[0] * cso[1], 5), {
+    ('Conv2D', (cso[0], 5), {
         'padding': 'valid',
         'activation': 'linear',
         'data_format': 'channels_first'
     }),
-    ('Reshape', (cso,), None)
+    # ('Reshape', (cso,), None)
 )
 
 # Example custom loss function: pass to loss= in build_model()
@@ -269,16 +278,25 @@ history = RunHistory(run)
 early = EarlyStoppingMin(min_epochs=min_epochs, monitor='val_loss' if val_generator is not None else 'loss',
                          min_delta=0., patience=patience, restore_best_weights=True, verbose=1)
 tensorboard = TensorBoard(log_dir=log_directory, batch_size=batch_size, update_freq='epoch')
-dlwp.fit_generator(generator, epochs=max_epochs, verbose=2, validation_data=val_generator, use_multiprocessing=True,
-                   callbacks=[history, RNNResetStates(), early])
+
+if use_keras_fit:
+    dlwp.fit(p_train, t_train, batch_size=batch_size, epochs=max_epochs, verbose=2, validation_data=val,
+             callbacks=[history, RNNResetStates(), early])
+else:
+    dlwp.fit_generator(generator, epochs=max_epochs, verbose=2, validation_data=val_generator,
+                       use_multiprocessing=True, callbacks=[history, RNNResetStates(), early])
 end_time = time.time()
 
 # Evaluate the model
 print("\nTrain time -- %s seconds --" % (end_time - start_time))
+print('Train loss:', history.history['loss'][-patience - 1])
+print('Train mean absolute error:', history.history['mean_absolute_error'][-patience - 1])
+run.log('TRAIN_LOSS', history.history['loss'][-patience - 1])
 if validation_data is not None:
     score = dlwp.evaluate(*val_generator.generate([]), verbose=0)
     print('Validation loss:', score[0])
     print('Validation mean absolute error:', score[1])
+    run.log('VAL_LOSS', score[0])
 
 # Save the model
 if model_file is not None:

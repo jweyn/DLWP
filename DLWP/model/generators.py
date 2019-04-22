@@ -138,7 +138,7 @@ class DataGenerator(Sequence):
         """
         :return: the number of batches per epoch
         """
-        return int(np.floor(self._n_sample / self._batch_size))
+        return int(np.ceil(self._n_sample / self._batch_size))
 
     def __getitem__(self, index):
         """
@@ -147,6 +147,10 @@ class DataGenerator(Sequence):
         :return: (ndarray, ndarray): predictors, targets
         """
         # Generate indexes of the batch
+        if int(index) < 0:
+            index = len(self) + index
+        if index > len(self):
+            raise IndexError
         indexes = self._indices[index * self._batch_size:(index + 1) * self._batch_size]
 
         # Generate data
@@ -295,7 +299,7 @@ class SmartDataGenerator(Sequence):
         """
         :return: the number of batches per epoch
         """
-        return int(np.floor(self._n_sample / self._batch_size))
+        return int(np.ceil(self._n_sample / self._batch_size))
 
     def __getitem__(self, index):
         """
@@ -304,6 +308,10 @@ class SmartDataGenerator(Sequence):
         :return: (ndarray, ndarray): predictors, targets
         """
         # Generate indexes of the batch
+        if int(index) < 0:
+            index = len(self) + index
+        if index > len(self):
+            raise IndexError
         indexes = self._indices[index * self._batch_size:(index + 1) * self._batch_size]
 
         # Generate data
@@ -537,7 +545,7 @@ class SeriesDataGenerator(Sequence):
         """
         :return: the number of batches per epoch
         """
-        return int(np.floor(self._n_sample / self._batch_size))
+        return int(np.ceil(self._n_sample / self._batch_size))
 
     def __getitem__(self, index):
         """
@@ -546,6 +554,10 @@ class SeriesDataGenerator(Sequence):
         :return: (ndarray, ndarray): predictors, targets
         """
         # Generate indexes of the batch
+        if int(index) < 0:
+            index = len(self) + index
+        if index > len(self):
+            raise IndexError
         indexes = self._indices[index * self._batch_size:(index + 1) * self._batch_size]
 
         # Generate data

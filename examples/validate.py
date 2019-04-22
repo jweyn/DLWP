@@ -34,14 +34,14 @@ predictor_file = '%s/cfs_6h_1979-2010_z500-th3-7-w700-rh850-pwat_NH_T2.nc' % roo
 
 # Names of model files, located in the root_directory, and labels for those models
 models = [
-    'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm',
-    'dlwp_6h_tau-lstm_no-tau-out',
-    'dlwp_6h_tau-sol-lstm_no-tau-out'
+    'dlwp_6h_tau-lstm16_z-tau-out',
+    'dlwp_6h_tau-lstm16_z-out',
+    'dlwp_6h_tau-sol-lstm16_z-out'
 ]
 model_labels = [
-    r'$\tau$ LSTM',
-    r'$\tau$ LSTM $Z$ out',
-    r'$\tau$+SOL LSTM $Z$ out'
+    r'$\tau$ LSTM16',
+    r'$\tau$ LSTM16 $Z$ out',
+    r'$\tau$+SOL LSTM16 $Z$ out'
 ]
 
 # Optional list of selections to make from the predictor dataset for each model. This is useful if, for example,
@@ -70,7 +70,7 @@ crop_north_pole = True
 # pandas datetime objects.
 # validation_set = 4 * (365 * 4 + 1)
 start_date = datetime(2007, 1, 1, 0)
-end_date = datetime(2007, 3, 31, 18)
+end_date = datetime(2009, 12, 31, 18)
 validation_set = np.array(pd.date_range(start_date, end_date, freq='6H'), dtype='datetime64')
 # validation_set = [d for d in validation_set if d.month in [1, 2, 12]]
 
@@ -108,7 +108,7 @@ plot_history = False
 plot_zonal = False
 plot_mse = True
 mse_title = r'$\hat{Z}_{500}$; 2007JFM; 20-70$^{\circ}$N'
-mse_file_name = 'mse_pwat-hgt_20-70-new-code.pdf'
+mse_file_name = 'mse_tau-lstm16_20-70.pdf'
 
 
 #%% Pre-processing
@@ -191,12 +191,12 @@ for m, model in enumerate(models):
     # Create TimeSeriesEstimator
     estimator = TimeSeriesEstimator(dlwp, val_generator)
     # Very crude but for this test I want to exclude the predicted thickness from being added back
-    if model == 'dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm':
+    if model_labels[m] == r'$\tau$ LSTM16':
         estimator._outputs_in_inputs = {'varlev': np.array(['HGT/500'])}
 
     # Make a time series prediction and convert the predictors for comparison
     print('Predicting with model %s...' % model_labels[m])
-    time_series = estimator.predict(num_forecast_steps)
+    time_series = estimator.predict(num_forecast_steps, verbose=1)
 
     # Slice the arrays as we want
     time_series = time_series.sel(**selection, lat=((time_series.lat >= lat_min) & (time_series.lat <= lat_max)))
