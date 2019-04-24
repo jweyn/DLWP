@@ -80,6 +80,9 @@ add_solar = False
 # train computation takes less time than the data loading.
 load_memory = False
 
+# Use multiple GPUs, if available
+n_gpu = 2
+
 # Force use of the keras model.fit() method. Currently investigating why model.fit() produces better weights than
 # model.fit_generator(). Note that this uses 2 * input_time_steps * output_time_steps times more memory.
 use_keras_fit = True
@@ -140,6 +143,9 @@ else:  # we must have a list of datetimes
                             assume_unique=True, invert=True)
     validation_data = data.sel(sample=validation_set)
     train_data = data.sel(sample=train_set)
+
+# For multiple GPUs, increase the batch size
+batch_size = n_gpu * batch_size
 
 # Build the data generators
 if load_memory:
@@ -252,7 +258,7 @@ else:
     loss_function = 'mse'
 
 # Build the model
-dlwp.build_model(layers, loss=loss_function, optimizer='adam', metrics=['mae'])
+dlwp.build_model(layers, loss=loss_function, optimizer='adam', metrics=['mae'], gpus=n_gpu)
 print(dlwp.model.summary())
 
 

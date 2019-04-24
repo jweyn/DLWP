@@ -52,8 +52,9 @@ class DLWPNeuralNet(object):
         self.imputer = None
         self.imputer_y = None
 
+        self.base_model = None
         self.model = None
-        self.is_parallel = False
+        self.gpus = 1
         if scaler_type is None:
             self._is_init_fit = True
         else:
@@ -92,17 +93,19 @@ class DLWPNeuralNet(object):
         # Self-explanatory
         util.make_keras_picklable()
         # Build a model, either on a single GPU or on a CPU to control multiple GPUs
-        self.model = keras.models.Sequential()
+        self.base_model = keras.models.Sequential()
         for l, layer in enumerate(layers):
             try:
                 layer_class = util.get_from_class('keras.layers', layer[0])
             except (ImportError, AttributeError):
                 # Maybe we've defined a custom layer, which would be in DLWP.custom
                 layer_class = util.get_from_class('DLWP.custom', layer[0])
-            self.model.add(layer_class(*layer[1], **layer[2]))
+            self.base_model.add(layer_class(*layer[1], **layer[2]))
         if gpus > 1:
-            self.model = multi_gpu_model(self.model, gpus=gpus, cpu_relocation=True)
-            self.is_parallel = True
+            self.model = multi_gpu_model(self.base_model, gpus=gpus, cpu_relocation=True)
+            self.gpus = gpus
+        else:
+            self.model = self.base_model
         self.model.compile(**compile_kwargs)
 
     @staticmethod

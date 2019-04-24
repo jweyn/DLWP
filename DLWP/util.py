@@ -13,14 +13,15 @@ import random
 import tempfile
 from importlib import import_module
 from copy import copy
-import keras.models
+import numpy as np
 import pandas as pd
+import keras.models
+from keras.utils import multi_gpu_model
 
 
 # ==================================================================================================================== #
 # General utility functions
 # ==================================================================================================================== #
-import numpy as np
 
 
 def make_keras_picklable():
@@ -118,7 +119,10 @@ def save_model(model, file_name, history=None):
     :param history: history from Keras fitting, or None
     :return:
     """
-    model.model.save('%s.keras' % file_name)
+    if hasattr(model, 'base_model'):
+        model.base_model.save('%s.keras' % file_name)
+    else:
+        model.model.save('%s.keras' % file_name)
     model_copy = copy(model)
     model_copy.model = None
     with open('%s.pkl' % file_name, 'wb') as f:
@@ -128,7 +132,7 @@ def save_model(model, file_name, history=None):
             pickle.dump(history.history, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def load_model(file_name, history=False, custom_objects=None):
+def load_model(file_name, history=False, custom_objects=None, gpus=1):
     """
     Loads a model saved to disk with the `save_model()` method.
 
@@ -136,13 +140,19 @@ def load_model(file_name, history=False, custom_objects=None):
     :param history: bool: if True, loads the history file along with the model
     :param custom_objects: dict: any custom functions or classes to be included when Keras loads the model. There is
         no need to add objects in DLWP.custom as those are added automatically.
+    :param gpus: int: load the model onto this number of GPUs
     :return: model [, dict]: loaded object [, dictionary of training history]
     """
     with open('%s.pkl' % file_name, 'rb') as f:
         model = pickle.load(f)
     custom_objects = custom_objects or {}
     custom_objects.update(get_classes('DLWP.custom'))
-    model.model = keras.models.load_model('%s.keras' % file_name, custom_objects=custom_objects, compile=True)
+    model.base_model = keras.models.load_model('%s.keras' % file_name, custom_objects=custom_objects, compile=True)
+    if gpus > 1:
+        model.model = multi_gpu_model(model.base_model, gpus=gpus, cpu_relocation=True)
+        model.gpus = gpus
+    else:
+        model.model = model.base_model
     if history:
         with open('%s.history' % file_name, 'rb') as f:
             h = pickle.load(f)
