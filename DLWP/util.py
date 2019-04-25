@@ -155,12 +155,17 @@ def load_model(file_name, history=False, custom_objects=None, gpus=1):
     # Load the saved keras model weights
     custom_objects = custom_objects or {}
     custom_objects.update(get_classes('DLWP.custom'))
-    model.base_model = keras.models.load_model('%s.keras' % file_name, custom_objects=custom_objects, compile=True)
+    loaded_model = keras.models.load_model('%s.keras' % file_name, custom_objects=custom_objects, compile=True)
     # If multiple GPUs are requested, copy the model to the GPUs
     if gpus > 1:
-        model.model = multi_gpu_model(model.base_model, gpus=gpus, cpu_relocation=True)
+        import tensorflow as tf
+        with tf.device('/cpu:0'):
+            model.base_model = keras.models.clone_model(loaded_model)
+            model.base_model.set_weights(loaded_model.get_weights())
+        model.model = multi_gpu_model(model.base_model, gpus=gpus)
         model.gpus = gpus
     else:
+        model.base_model = loaded_model
         model.model = model.base_model
     # Also load the history file, if requested
     if history:

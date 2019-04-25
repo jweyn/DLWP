@@ -102,7 +102,10 @@ class DLWPNeuralNet(object):
                 layer_class = util.get_from_class('DLWP.custom', layer[0])
             self.base_model.add(layer_class(*layer[1], **layer[2]))
         if gpus > 1:
-            self.model = multi_gpu_model(self.base_model, gpus=gpus, cpu_relocation=True)
+            import tensorflow as tf
+            with tf.device('/cpu:0'):
+                self.base_model = keras.models.clone_model(self.base_model)
+            self.model = multi_gpu_model(self.base_model, gpus=gpus)
             self.gpus = gpus
         else:
             self.model = self.base_model
