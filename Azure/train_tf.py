@@ -293,6 +293,10 @@ else:
                        use_multiprocessing=True, callbacks=[history, RNNResetStates(), early])
 end_time = time.time()
 
+# Save the model
+if model_file is not None:
+    save_model(dlwp, model_file, history=history)
+
 # Evaluate the model
 print("\nTrain time -- %s seconds --" % (end_time - start_time))
 print('Train loss:', history.history['loss'][-patience - 1])
@@ -303,7 +307,3 @@ if validation_data is not None:
     print('Validation loss:', score[0])
     print('Validation mean absolute error:', score[1])
     run.log('VAL_LOSS', score[0])
-
-# Save the model
-if model_file is not None:
-    save_model(dlwp, model_file, history=history)

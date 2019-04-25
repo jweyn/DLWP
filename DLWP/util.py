@@ -119,14 +119,20 @@ def save_model(model, file_name, history=None):
     :param history: history from Keras fitting, or None
     :return:
     """
+    # Save the model structure and weights
     if hasattr(model, 'base_model'):
         model.base_model.save('%s.keras' % file_name)
     else:
         model.model.save('%s.keras' % file_name)
+    # Create a picklable copy of the DLWP model object excluding the keras model
     model_copy = copy(model)
     model_copy.model = None
+    if hasattr(model, 'base_model'):
+        model_copy.base_model = None
+    # Save the pickled DLWP object
     with open('%s.pkl' % file_name, 'wb') as f:
         pickle.dump(model_copy, f, protocol=pickle.HIGHEST_PROTOCOL)
+    # Save the history, if requested
     if history is not None:
         with open('%s.history' % file_name, 'wb') as f:
             pickle.dump(history.history, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -143,16 +149,20 @@ def load_model(file_name, history=False, custom_objects=None, gpus=1):
     :param gpus: int: load the model onto this number of GPUs
     :return: model [, dict]: loaded object [, dictionary of training history]
     """
+    # Load the pickled DLWP object
     with open('%s.pkl' % file_name, 'rb') as f:
         model = pickle.load(f)
+    # Load the saved keras model weights
     custom_objects = custom_objects or {}
     custom_objects.update(get_classes('DLWP.custom'))
     model.base_model = keras.models.load_model('%s.keras' % file_name, custom_objects=custom_objects, compile=True)
+    # If multiple GPUs are requested, copy the model to the GPUs
     if gpus > 1:
         model.model = multi_gpu_model(model.base_model, gpus=gpus, cpu_relocation=True)
         model.gpus = gpus
     else:
         model.model = model.base_model
+    # Also load the history file, if requested
     if history:
         with open('%s.history' % file_name, 'rb') as f:
             h = pickle.load(f)
