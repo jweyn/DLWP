@@ -5,10 +5,10 @@
 #
 
 """
-Simple routines for evaluating the performance of a DLWP model.
+Plot forecasts from DLWP models, along with verification and the CFS and barotropic models.
 """
 
-from DLWP.model import DataGenerator, Preprocessor
+from DLWP.model import DataGenerator
 from DLWP.model import verify
 from DLWP.util import load_model
 from DLWP.data import CFSReforecast

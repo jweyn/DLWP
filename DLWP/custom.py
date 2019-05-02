@@ -10,7 +10,7 @@ Custom Keras and PyTorch classes.
 
 from keras import backend as K
 from keras.callbacks import Callback, EarlyStopping
-from keras.layers.convolutional import ZeroPadding2D
+from keras.layers.convolutional import ZeroPadding2D, ZeroPadding3D
 from keras.layers.local import LocallyConnected2D
 from keras.utils import conv_utils
 from keras.engine.base_layer import InputSpec
@@ -209,6 +209,94 @@ class PeriodicPadding2D(ZeroPadding2D):
             outputs = K.concatenate([inputs[:, :, left_slice], inputs, inputs[:, :, right_slice]], axis=2)
             # Pad the vertical
             outputs = K.concatenate([outputs[:, top_slice], outputs, outputs[:, bottom_slice]], axis=1)
+        return outputs
+
+
+class PeriodicPadding3D(ZeroPadding3D):
+    """Zero-padding layer for 3D data (spatial or spatio-temporal).
+
+    # Arguments
+        padding: int, or tuple of 3 ints, or tuple of 3 tuples of 2 ints.
+            - If int: the same symmetric padding
+                is applied to height and width.
+            - If tuple of 3 ints:
+                interpreted as two different
+                symmetric padding values for height and width:
+                `(symmetric_dim1_pad, symmetric_dim2_pad, symmetric_dim3_pad)`.
+            - If tuple of 3 tuples of 2 ints:
+                interpreted as
+                `((left_dim1_pad, right_dim1_pad),
+                  (left_dim2_pad, right_dim2_pad),
+                  (left_dim3_pad, right_dim3_pad))`
+        data_format: A string,
+            one of `"channels_last"` or `"channels_first"`.
+            The ordering of the dimensions in the inputs.
+            `"channels_last"` corresponds to inputs with shape
+            `(batch, spatial_dim1, spatial_dim2, spatial_dim3, channels)`
+            while `"channels_first"` corresponds to inputs with shape
+            `(batch, channels, spatial_dim1, spatial_dim2, spatial_dim3)`.
+            It defaults to the `image_data_format` value found in your
+            Keras config file at `~/.keras/keras.json`.
+            If you never set it, then it will be "channels_last".
+
+    # Input shape
+        5D tensor with shape:
+        - If `data_format` is `"channels_last"`:
+            `(batch, first_axis_to_pad, second_axis_to_pad, third_axis_to_pad,
+              depth)`
+        - If `data_format` is `"channels_first"`:
+            `(batch, depth,
+              first_axis_to_pad, second_axis_to_pad, third_axis_to_pad)`
+
+    # Output shape
+        5D tensor with shape:
+        - If `data_format` is `"channels_last"`:
+            `(batch, first_padded_axis, second_padded_axis, third_axis_to_pad,
+              depth)`
+        - If `data_format` is `"channels_first"`:
+            `(batch, depth,
+              first_padded_axis, second_padded_axis, third_axis_to_pad)`
+    """
+
+    def __init__(self,
+                 padding=(1, 1),
+                 data_format=None,
+                 **kwargs):
+        super(PeriodicPadding3D, self).__init__(padding=padding,
+                                                data_format=data_format,
+                                                **kwargs)
+
+    def call(self, inputs):
+        if K.backend() == 'plaidml.keras.backend':
+            shape = inputs.shape.dims
+        else:
+            shape = inputs.shape
+        if self.data_format == 'channels_first':
+            low_slice = slice(shape[2] - self.padding[0][0], shape[2])
+            high_slice = slice(0, self.padding[0][1])
+            top_slice = slice(shape[3] - self.padding[1][0], shape[3])
+            bottom_slice = slice(0, self.padding[1][1])
+            left_slice = slice(shape[4] - self.padding[2][0], shape[4])
+            right_slice = slice(0, self.padding[2][1])
+            # Pad the horizontal
+            outputs = K.concatenate([inputs[:, :, :, :, left_slice], inputs, inputs[:, :, :, :, right_slice]], axis=4)
+            # Pad the vertical
+            outputs = K.concatenate([outputs[:, :, top_slice], outputs, outputs[:, :, bottom_slice]], axis=3)
+            # Pad the depth
+            outputs = K.concatenate([outputs[:, low_slice], outputs, outputs[:, high_slice]], axis=2)
+        else:
+            low_slice = slice(shape[1] - self.padding[0][0], shape[1])
+            high_slice = slice(0, self.padding[0][1])
+            top_slice = slice(shape[2] - self.padding[1][0], shape[2])
+            bottom_slice = slice(0, self.padding[1][1])
+            left_slice = slice(shape[3] - self.padding[2][0], shape[3])
+            right_slice = slice(0, self.padding[2][1])
+            # Pad the horizontal
+            outputs = K.concatenate([inputs[:, :, :, left_slice], inputs, inputs[:, :, :, right_slice]], axis=3)
+            # Pad the vertical
+            outputs = K.concatenate([outputs[:, :, top_slice], outputs, outputs[:, :, bottom_slice]], axis=2)
+            # Pad the depth
+            outputs = K.concatenate([outputs[:, low_slice], outputs, outputs[:, high_slice]], axis=1)
         return outputs
 
 
