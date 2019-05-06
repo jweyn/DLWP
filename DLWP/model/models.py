@@ -425,7 +425,7 @@ class DLWPFunctional(object):
         time_steps = int(time_steps)
         if time_steps < 1:
             raise ValueError("time_steps must be an int > 0")
-        steps = int(np.ceil(time_steps / self._n_steps))
+        steps = int(np.ceil(time_steps / self._n_steps / self.time_dim))
         out_steps = steps * self._n_steps
         time_series = np.full((out_steps,) + predictors.shape, np.nan, dtype=np.float32)
         p = predictors
@@ -436,8 +436,8 @@ class DLWPFunctional(object):
             feature_shape = p.shape[1:]
         for t in range(steps):
             if 'verbose' in kwargs and kwargs['verbose'] > 0:
-                print('Prediction step %d/%d' % (t + 1, time_steps))
-            result = 1. * self.predict(p, **kwargs)
+                print('Prediction step %d/%d' % (t + 1, steps))
+            result = self.predict(p, **kwargs)
             p[:] = result[-1]
             time_series[t * self._n_steps:(t + 1) * self._n_steps, ...] = np.stack(result, axis=0)
         time_series = time_series.reshape((out_steps, sample_dim, self.time_dim, -1) + feature_shape[1:])
