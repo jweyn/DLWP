@@ -332,7 +332,7 @@ class SeriesDataGenerator(Sequence):
     """
 
     def __init__(self, model, ds, input_sel=None, output_sel=None, input_time_steps=1, output_time_steps=1,
-                 add_insolation=False, batch_size=32, shuffle=False, remove_nan=True, load=True):
+                 sequence=None, add_insolation=False, batch_size=32, shuffle=False, remove_nan=True, load=True):
         """
         Initialize a SeriesDataGenerator.
 
@@ -343,6 +343,7 @@ class SeriesDataGenerator(Sequence):
         :param input_time_steps: int: number of time steps in the input features
         :param output_time_steps: int: number of time steps in the output features (recommended either 1 or the same
             as input_time_steps)
+        :param sequence: int or None: if int, then the output targets is a list of sequence consecutive forecast steps
         :param add_insolation: bool: if True, add insolation to the inputs. Incompatible with 3-d convolutions.
         :param batch_size: int: number of samples to take at a time from the dataset
         :param shuffle: bool: if True, randomly select batches
@@ -355,6 +356,8 @@ class SeriesDataGenerator(Sequence):
         assert int(input_time_steps) > 0
         assert int(output_time_steps) > 0
         assert int(batch_size) > 0
+        if sequence is not None:
+            assert int(sequence) > 0
         self.ds = ds
         self._batch_size = batch_size
         self._shuffle = shuffle
@@ -363,7 +366,11 @@ class SeriesDataGenerator(Sequence):
         self._keep_time_axis = self.model.is_recurrent
         self._impute_missing = self.model.impute
         self._indices = []
-        self._n_sample = ds.dims['sample'] - input_time_steps - output_time_steps + 1
+        self._sequence = sequence
+        if self._sequence is not None:
+            self._n_sample = ds.dims['sample'] - input_time_steps - output_time_steps * sequence + 1
+        else:
+            self._n_sample = ds.dims['sample'] - input_time_steps - output_time_steps + 1
         if 'time_step' in ds.dims:
             # Use -1 index because Preprocessor.data_to_samples (which generates a 'time_step' dim), assigns the
             # datetime 'sample' dim based on the initialization time, time_step=-1
@@ -504,10 +511,10 @@ class SeriesDataGenerator(Sequence):
         else:
             samples = np.array(samples, dtype=np.int)
         n_sample = len(samples)
+
+        # Predictors
         p = np.concatenate([self.input_da.values[samples + n, np.newaxis] for n in range(self._input_time_steps)],
                            axis=1)
-        t = np.concatenate([self.output_da.values[samples + self._input_time_steps + n, np.newaxis]
-                            for n in range(self._output_time_steps)], axis=1)
         if self._add_insolation:
             # Pretend like we have no insolation and keep the time axis
             self._add_insolation = False
@@ -521,25 +528,59 @@ class SeriesDataGenerator(Sequence):
             p = p.reshape((n_sample,) + s)
             p = np.concatenate([p, sol[:, :, np.newaxis]], axis=2)
         p = p.reshape((n_sample, -1))
-        t = t.reshape((n_sample, -1))
 
-        # Remove samples with NaN; scale and impute
-        if self._remove_nan:
-            p, t = delete_nan_samples(p, t)
-        if scale_and_impute:
-            if self._impute_missing:
-                p, t = self.model.imputer_transform(p, t)
-            p, t = self.model.scaler_transform(p, t)
+        # Targets, including sequence if desired
+        if self._sequence is not None:
+            targets = []
+            for s in range(self._sequence):
+                t = np.concatenate([self.output_da.values[samples + self._input_time_steps +
+                                                          self._output_time_steps * s + n, np.newaxis]
+                                    for n in range(self._output_time_steps)], axis=1)
 
-        # Format spatial shape for convolutions; also takes care of time axis
-        if self._is_convolutional:
-            p = p.reshape((n_sample,) + self.convolution_shape)
-            t = t.reshape((n_sample,) + self.output_convolution_shape)
-        elif self._keep_time_axis:
-            p = p.reshape((n_sample,) + self.dense_shape)
-            t = t.reshape((n_sample,) + self.output_dense_shape)
+                t = t.reshape((n_sample, -1))
 
-        return p, t
+                # Remove samples with NaN; scale and impute
+                if self._remove_nan:
+                    p, t = delete_nan_samples(p, t)
+                if scale_and_impute:
+                    if self._impute_missing:
+                        p, t = self.model.imputer_transform(p, t)
+                    p, t = self.model.scaler_transform(p, t)
+
+                # Format spatial shape for convolutions; also takes care of time axis
+                if self._is_convolutional:
+                    p = p.reshape((n_sample,) + self.convolution_shape)
+                    t = t.reshape((n_sample,) + self.output_convolution_shape)
+                elif self._keep_time_axis:
+                    p = p.reshape((n_sample,) + self.dense_shape)
+                    t = t.reshape((n_sample,) + self.output_dense_shape)
+
+                targets.append(t)
+        else:
+            t = np.concatenate([self.output_da.values[samples + self._input_time_steps + n, np.newaxis]
+                                for n in range(self._output_time_steps)], axis=1)
+
+            t = t.reshape((n_sample, -1))
+
+            # Remove samples with NaN; scale and impute
+            if self._remove_nan:
+                p, t = delete_nan_samples(p, t)
+            if scale_and_impute:
+                if self._impute_missing:
+                    p, t = self.model.imputer_transform(p, t)
+                p, t = self.model.scaler_transform(p, t)
+
+            # Format spatial shape for convolutions; also takes care of time axis
+            if self._is_convolutional:
+                p = p.reshape((n_sample,) + self.convolution_shape)
+                t = t.reshape((n_sample,) + self.output_convolution_shape)
+            elif self._keep_time_axis:
+                p = p.reshape((n_sample,) + self.dense_shape)
+                t = t.reshape((n_sample,) + self.output_dense_shape)
+
+            targets = t
+
+        return p, targets
 
     def __len__(self):
         """

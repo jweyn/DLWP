@@ -281,9 +281,9 @@ class PeriodicPadding3D(ZeroPadding3D):
             # Pad the horizontal
             outputs = K.concatenate([inputs[:, :, :, :, left_slice], inputs, inputs[:, :, :, :, right_slice]], axis=4)
             # Pad the vertical
-            outputs = K.concatenate([outputs[:, :, top_slice], outputs, outputs[:, :, bottom_slice]], axis=3)
+            outputs = K.concatenate([outputs[:, :, :, top_slice], outputs, outputs[:, :, :, bottom_slice]], axis=3)
             # Pad the depth
-            outputs = K.concatenate([outputs[:, low_slice], outputs, outputs[:, high_slice]], axis=2)
+            outputs = K.concatenate([outputs[:, :, low_slice], outputs, outputs[:, :, high_slice]], axis=2)
         else:
             low_slice = slice(shape[1] - self.padding[0][0], shape[1])
             high_slice = slice(0, self.padding[0][1])

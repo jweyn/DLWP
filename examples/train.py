@@ -40,6 +40,7 @@ patience = 50
 batch_size = 64
 lambda_ = 1.e-4
 weight_loss = False
+shuffle = True
 
 # Data parameters. Specify the input variables/levels, output variables/levels, and time steps in/out. Note that for
 # LSTM layers, the model can only predict effectively if the output time steps is 1 or equal to the input time steps.
@@ -56,6 +57,13 @@ add_solar = True
 # If system memory permits, loading the predictor data can greatly increase efficiency when training on GPUs, if the
 # train computation takes less time than the data loading.
 load_memory = True
+
+# Use multiple GPUs, if available
+n_gpu = 2
+
+# Force use of the keras model.fit() method. May run faster in some instances, but uses (input_time_steps +
+# output_time_steps) times more memory.
+use_keras_fit = False
 
 # Validation set to use. Either an integer (number of validation samples, taken from the end), or an iterable of
 # pandas datetime objects. The train set can be set to the first <integer> samples, an iterable of dates, or None to
@@ -106,17 +114,23 @@ else:  # we must have a list of datetimes
     train_data = data.sel(sample=train_set)
 
 # Build the data generators
-if load_memory:
+if load_memory or use_keras_fit:
     print('Loading data to memory...')
 generator = SeriesDataGenerator(dlwp, train_data, input_sel=input_selection, output_sel=output_selection,
                                 input_time_steps=input_time_steps, output_time_steps=output_time_steps,
-                                batch_size=batch_size, add_insolation=add_solar, load=load_memory)
+                                batch_size=batch_size, add_insolation=add_solar, load=load_memory, shuffle=shuffle)
+if use_keras_fit:
+    p_train, t_train = generator.generate([])
 if validation_data is not None:
     val_generator = SeriesDataGenerator(dlwp, validation_data, input_sel=input_selection, output_sel=output_selection,
                                         input_time_steps=input_time_steps, output_time_steps=output_time_steps,
                                         batch_size=batch_size, add_insolation=add_solar, load=load_memory)
+    if use_keras_fit:
+        val = val_generator.generate([])
 else:
     val_generator = None
+    if use_keras_fit:
+        val = None
 
 
 #%% Compile the model structure with some generator data information
@@ -211,8 +225,13 @@ else:
     loss_function = 'mse'
 
 # Build the model
-dlwp.build_model(layers, loss=loss_function, optimizer='adam', metrics=['mae'])
-print(dlwp.model.summary())
+try:
+    dlwp.build_model(layers, loss=loss_function, optimizer='adam', metrics=['mae'], gpus=n_gpu)
+except ValueError:
+    for layer in dlwp.base_model.layers:
+        print(layer.name, layer.output_shape)
+    raise
+print(dlwp.base_model.summary())
 
 
 #%% Initialize the scaler/imputer if necessary
@@ -236,8 +255,13 @@ history = History()
 early = EarlyStoppingMin(min_epochs=min_epochs, monitor='val_loss' if val_generator is not None else 'loss',
                          min_delta=0., patience=patience, restore_best_weights=True, verbose=1)
 tensorboard = TensorBoard(log_dir=log_directory, batch_size=batch_size, update_freq='epoch')
-dlwp.fit_generator(generator, epochs=max_epochs, verbose=2, validation_data=val_generator, use_multiprocessing=True,
-                   callbacks=[history, RNNResetStates(), early])
+
+if use_keras_fit:
+    dlwp.fit(p_train, t_train, batch_size=batch_size, epochs=max_epochs, verbose=1, validation_data=val,
+             shuffle=shuffle, callbacks=[history, RNNResetStates(), early])
+else:
+    dlwp.fit_generator(generator, epochs=max_epochs, verbose=2, validation_data=val_generator,
+                       use_multiprocessing=True, callbacks=[history, RNNResetStates(), early])
 end_time = time.time()
 
 # Evaluate the model
@@ -250,3 +274,4 @@ if validation_data is not None:
 # Save the model
 if model_file is not None:
     save_model(dlwp, model_file, history=history)
+    print('Wrote model %s' % model_file)

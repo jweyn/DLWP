@@ -312,3 +312,148 @@ class DLWPNeuralNet(object):
         predictors_scaled, targets_scaled = self.scaler_transform(predictors, targets)
         score = self.model.evaluate(predictors_scaled, targets_scaled, **kwargs)
         return score
+
+
+class DLWPFunctional(object):
+    """
+    DLWP model class which uses model built on the Keras Functional API. This class DOES NOT support scaling or
+    imputing of input/target data; this must be done separately.
+    """
+    def __init__(self, is_convolutional=True, is_recurrent=False, time_dim=1):
+        """
+        Initialize an instance of DLWPFunctional.
+
+        :param is_convolutional: bool: if True, use spatial shapes for input and output of the model
+        :param is_recurrent: bool: if True, add a recurrent time axis to the model
+        :param time_dim: int: the number of time steps in the input and output of the model (int >= 1)
+        """
+        self.is_convolutional = is_convolutional
+        self.is_recurrent = is_recurrent
+        if int(time_dim) < 1:
+            raise ValueError("'time_dim' must be >= 1")
+        self.time_dim = time_dim
+
+        self.scaler = None
+        self.scaler_y = None
+        self.impute = False
+        self.imputer = None
+        self.imputer_y = None
+        self._n_steps = 1
+
+        self.base_model = None
+        self.model = None
+        self.gpus = 1
+
+    def build_model(self, model, gpus=1, **compile_kwargs):
+        """
+        Compile a Keras Functional model.
+
+        :param model: keras.models.Model: Keras functional model
+        :param gpus: int: number of GPU units on which to parallelize the Keras model
+        :param compile_kwargs: kwargs passed to the 'compile' method of the Keras model
+        """
+        # Test the parameters
+        if type(gpus) is not int:
+            raise TypeError("'gpus' argument must be an int")
+        # Self-explanatory
+        util.make_keras_picklable()
+        # Build a model, either on a single GPU or on a CPU to control multiple GPUs
+        self.base_model = model
+        self._n_steps = len(model.outputs)
+        if gpus > 1:
+            import tensorflow as tf
+            with tf.device('/cpu:0'):
+                self.base_model = keras.models.clone_model(self.base_model)
+            self.model = multi_gpu_model(self.base_model, gpus=gpus)
+            self.gpus = gpus
+        else:
+            self.model = self.base_model
+        self.model.compile(**compile_kwargs)
+
+    def scaler_transform(self, X, y=None):
+        """
+        For compatibility.
+        """
+        if y is not None:
+            return X, y
+        else:
+            return X
+
+    def fit(self, predictors, targets, **kwargs):
+        """
+        Fit the DLWPNeuralNet model.
+
+        :param predictors: ndarray: predictor data
+        :param targets: ndarray: target data
+        :param kwargs: passed to the Keras 'fit' method
+        """
+        self.model.fit(predictors, targets, **kwargs)
+
+    def fit_generator(self, generator, **kwargs):
+        """
+        Fit the DLWPNeuralNet model using a generator.
+        the predictor/target data.
+
+        :param generator: a generator for producing batches of data (see Keras docs), e.g., DataGenerator below
+        :param kwargs: passed to the model's fit_generator() method
+        """
+        self.model.fit_generator(generator, **kwargs)
+
+    def predict(self, predictors, **kwargs):
+        """
+        Make a prediction with the DLWPNeuralNet model.
+
+        :param predictors: ndarray: predictor data
+        :param kwargs: passed to Keras 'predict' method
+        :return: ndarray: model prediction
+        """
+        return self.model.predict(predictors, **kwargs)
+
+    def predict_timeseries(self, predictors, time_steps, keep_time_dim=False, **kwargs):
+        """
+        Make a timeseries prediction with the DLWPNeuralNet model. Also performs input feature scaling. Forward predict
+        time_steps number of time steps, intelligently using the known model outputs to run the model time_steps
+        /time_dim number of times and returning a time series of concatenated steps.
+
+        :param predictors: ndarray: predictor data
+        :param time_steps: int: number of time steps to predict forward
+        :param keep_time_dim: if True, keep the time_step dimension in the output, otherwise integrates it into the
+            forecast_hour (first) dimension
+        :param kwargs: passed to Keras 'predict' method
+        :return ndarray: model prediction; first dim is time
+        """
+        time_steps = int(time_steps)
+        if time_steps < 1:
+            raise ValueError("time_steps must be an int > 0")
+        steps = int(np.ceil(time_steps / self._n_steps))
+        out_steps = steps * self._n_steps
+        time_series = np.full((out_steps,) + predictors.shape, np.nan, dtype=np.float32)
+        p = predictors
+        sample_dim = p.shape[0]
+        if self.is_recurrent:
+            feature_shape = p.shape[2:]
+        else:
+            feature_shape = p.shape[1:]
+        for t in range(steps):
+            if 'verbose' in kwargs and kwargs['verbose'] > 0:
+                print('Prediction step %d/%d' % (t + 1, time_steps))
+            result = 1. * self.predict(p, **kwargs)
+            p[:] = result[-1]
+            time_series[t * self._n_steps:(t + 1) * self._n_steps, ...] = np.stack(result, axis=0)
+        time_series = time_series.reshape((out_steps, sample_dim, self.time_dim, -1) + feature_shape[1:])
+        if not keep_time_dim:
+            time_series = time_series.transpose((0, 2, 1) + tuple(range(3, 3 + len(feature_shape))))
+            time_series = time_series.reshape((out_steps * self.time_dim, sample_dim, -1) + feature_shape[1:])
+        return time_series
+
+    def evaluate(self, predictors, targets, **kwargs):
+        """
+        Run the Keras model's 'evaluate' method, with input feature scaling.
+
+        :param predictors: ndarray: predictor data
+        :param targets: ndarray: target data
+        :param kwargs: passed to Keras 'evaluate' method
+        :return:
+        """
+        score = self.model.evaluate(predictors, targets, **kwargs)
+        return score
