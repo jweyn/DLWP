@@ -22,7 +22,7 @@ from keras.callbacks import TensorBoard
 from azureml.core import Run
 
 from keras.layers import Input, ZeroPadding2D, Conv2D, MaxPooling2D, UpSampling2D, concatenate
-from DLWP.custom import PeriodicPadding2D, RNNResetStates, EarlyStoppingMin, RunHistory, Slice
+from DLWP.custom import PeriodicPadding2D, RNNResetStates, EarlyStoppingMin, RunHistory, slice_layer
 from keras.models import Model
 
 
@@ -216,10 +216,10 @@ conv_2d_6 = Conv2D(cso[0], 5, **{
         'activation': 'linear',
         'data_format': 'channels_first'
     })
-split_1_1 = Slice(0, 16, axis=1)
-split_1_2 = Slice(16, 32, axis=1)
-split_2_1 = Slice(0, 32, axis=1)
-split_2_2 = Slice(32, 64, axis=1)
+split_1_1 = slice_layer(0, 16, axis=1)
+split_1_2 = slice_layer(16, 32, axis=1)
+split_2_1 = slice_layer(0, 32, axis=1)
+split_2_2 = slice_layer(32, 64, axis=1)
 
 
 def basic_model(x):

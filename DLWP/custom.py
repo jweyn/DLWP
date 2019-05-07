@@ -301,36 +301,24 @@ class PeriodicPadding3D(ZeroPadding3D):
         return outputs
 
 
-class Slice(Layer):
+def slice_layer(start, end, step=None, axis=1):
     """
-    Implementation of a slicing layer for the Keras functional API.
+    Return a Lambda layer that performs slicing on a tensor.
+
+    :param start: int: start index
+    :param end: int: end index
+    :param step: int: stepping parameter
+    :param axis: int: axis along which to slice
     """
-    def __init__(self, start, end, step=None, axis=1):
-        """
-        Initialize a slicing layer.
+    if axis < 0:
+        raise ValueError("'slice_layer' can only work on a specified axis > 0")
 
-        :param start: int: start index
-        :param end: int: end index
-        :param axis: int: axis along which to slice
-        """
-        super(Slice, self).__init__()
-        self._layer = None
-        self.start = int(start)
-        self.end = int(end)
-        self.step = None if step is None else int(step)
-        self.axis = int(axis)
-        if self.axis < 0:
-            raise ValueError("'Slice' layer can only work on a specified axis > 0")
-
-        self._layer = Lambda(self.func)
-
-    def func(self, x):
-        slices = [slice(None)] * self.axis
-        slices.append(slice(self.start, self.end, self.step))
+    def slice_func(x):
+        slices = [slice(None)] * axis
+        slices.append(slice(start, end, step))
         return x[tuple(slices)]
 
-    def __call__(self, x, **kwargs):
-        return self._layer(x)
+    return Lambda(slice_func)
 
 
 class RowConnected2D(LocallyConnected2D):

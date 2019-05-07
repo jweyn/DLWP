@@ -21,7 +21,7 @@ from keras.losses import mean_squared_error
 from keras.callbacks import History, TensorBoard
 
 from keras.layers import Input, ZeroPadding2D, Conv2D, MaxPooling2D, UpSampling2D, concatenate
-from DLWP.custom import PeriodicPadding2D, RNNResetStates, EarlyStoppingMin, Slice
+from DLWP.custom import PeriodicPadding2D, RNNResetStates, EarlyStoppingMin, slice_layer
 from keras.models import Model
 
 
@@ -74,7 +74,7 @@ use_keras_fit = False
 # pandas datetime objects. The train set can be set to the first <integer> samples, an iterable of dates, or None to
 # simply use the remaining points. Match the type of validation_set.
 validation_set = list(pd.date_range(datetime(2003, 1, 1, 0), datetime(2006, 12, 31, 18), freq='6H'))
-train_set = list(pd.date_range(datetime(1979, 1, 1, 6), datetime(2002, 12, 31, 18), freq='6H'))
+train_set = list(pd.date_range(datetime(1979, 1, 1, 6), datetime(1982, 12, 31, 18), freq='6H'))
 
 
 #%% Open data
@@ -188,10 +188,10 @@ conv_2d_6 = Conv2D(cso[0], 5, **{
         'activation': 'linear',
         'data_format': 'channels_first'
     })
-split_1_1 = Slice(0, 16, axis=1)
-split_1_2 = Slice(16, 32, axis=1)
-split_2_1 = Slice(0, 32, axis=1)
-split_2_2 = Slice(32, 64, axis=1)
+split_1_1 = slice_layer(0, 16, axis=1)
+split_1_2 = slice_layer(16, 32, axis=1)
+split_2_1 = slice_layer(0, 32, axis=1)
+split_2_2 = slice_layer(32, 64, axis=1)
 
 
 def basic_model(x):
