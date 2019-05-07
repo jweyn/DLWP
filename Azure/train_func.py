@@ -21,8 +21,8 @@ from DLWP.util import save_model, train_test_split_ind
 from keras.callbacks import TensorBoard
 from azureml.core import Run
 
-from keras.layers import Input, ZeroPadding2D, Conv2D, MaxPooling2D, UpSampling2D, merge
-from DLWP.custom import PeriodicPadding2D, RNNResetStates, EarlyStoppingMin, RunHistory
+from keras.layers import Input, ZeroPadding2D, Conv2D, MaxPooling2D, UpSampling2D, concatenate
+from DLWP.custom import PeriodicPadding2D, RNNResetStates, EarlyStoppingMin, RunHistory, Slice
 from keras.models import Model
 
 
@@ -64,10 +64,12 @@ lambda_ = 1.e-4
 weight_loss = False
 loss_by_step = None
 shuffle = True
+skip_connections = True
 
-# Data parameters. Specify the input variables/levels, output variables/levels, and time steps in/out. Note that for
-# LSTM layers, the model can only predict effectively if the output time steps is 1 or equal to the input time steps.
-# Ensure that the selections use LISTS of values (even for only 1) to keep dimensions correct.
+# Data parameters. Specify the input/output variables/levels and input/output time steps. DLWPFunctional requires that
+# the inputs and outputs match exactly (for now). Ensure that the selections use LISTS of values (even for only 1) to
+# keep dimensions correct. The number of output iterations to train on is given by integration_steps. The actual number
+# of forecast steps (units of model delta t) is io_time_steps * integration_steps.
 io_selection = {'varlev': ['HGT/500', 'THICK/300-700']}
 io_time_steps = 2
 integration_steps = 6
@@ -197,14 +199,14 @@ conv_2d_3 = Conv2D(128, 3, **{
         'activation': 'tanh',
         'data_format': 'channels_first'
     })
-conv_2d_4 = Conv2D(64, 3, **{
+conv_2d_4 = Conv2D(32 if skip_connections else 64, 3, **{
         'dilation_rate': 1,
         'padding': 'valid',
         'activation': 'tanh',
         'data_format': 'channels_first'
     })
-conv_2d_5 = Conv2D(32, 3, **{
-        'dilation_rate': 1,
+conv_2d_5 = Conv2D(16 if skip_connections else 32, 3, **{
+        'dilation_rate': 2,
         'padding': 'valid',
         'activation': 'tanh',
         'data_format': 'channels_first'
@@ -214,9 +216,13 @@ conv_2d_6 = Conv2D(cso[0], 5, **{
         'activation': 'linear',
         'data_format': 'channels_first'
     })
+split_1_1 = Slice(0, 16, axis=1)
+split_1_2 = Slice(16, 32, axis=1)
+split_2_1 = Slice(0, 32, axis=1)
+split_2_2 = Slice(32, 64, axis=1)
 
 
-def base_model(x):
+def basic_model(x):
     x = periodic_padding_2(zero_padding_2(x))
     x = conv_2d_1(x)
     x = max_pooling_2(x)
@@ -229,16 +235,41 @@ def base_model(x):
     x = periodic_padding_1(zero_padding_1(x))
     x = conv_2d_4(x)
     x = up_sampling_2(x)
-    x = periodic_padding_1(zero_padding_1(x))
+    x = periodic_padding_2(zero_padding_2(x))
     x = conv_2d_5(x)
     x = periodic_padding_2(zero_padding_2(x))
     x = conv_2d_6(x)
     return x
 
 
-outputs = [base_model(input_0)]
+def skip_model(x):
+    x = periodic_padding_2(zero_padding_2(x))
+    x = conv_2d_1(x)
+    x, x1 = split_1_1(x), split_1_2(x)
+    x = max_pooling_2(x)
+    x = periodic_padding_1(zero_padding_1(x))
+    x = conv_2d_2(x)
+    x, x2 = split_2_1(x), split_2_2(x)
+    x = max_pooling_2(x)
+    x = periodic_padding_1(zero_padding_1(x))
+    x = conv_2d_3(x)
+    x = up_sampling_2(x)
+    x = periodic_padding_1(zero_padding_1(x))
+    x = conv_2d_4(x)
+    x = concatenate([x, x2], axis=1)
+    x = up_sampling_2(x)
+    x = periodic_padding_2(zero_padding_2(x))
+    x = conv_2d_5(x)
+    x = concatenate([x, x1], axis=1)
+    x = periodic_padding_2(zero_padding_2(x))
+    x = conv_2d_6(x)
+    return x
+
+
+model_function = skip_model if skip_connections else basic_model
+outputs = [model_function(input_0)]
 for o in range(1, integration_steps):
-    outputs.append(base_model(outputs[o-1]))
+    outputs.append(model_function(outputs[o-1]))
 
 if loss_by_step is None:
     loss_by_step = [1./integration_steps] * integration_steps

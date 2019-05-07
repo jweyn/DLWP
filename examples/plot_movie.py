@@ -8,7 +8,7 @@
 Plot a sequence of forecasts from a DLWP model.
 """
 
-from DLWP.model import SeriesDataGenerator, verify, TimeSeriesEstimator
+from DLWP.model import SeriesDataGenerator, verify, TimeSeriesEstimator, DLWPFunctional
 from DLWP.util import load_model
 from DLWP.plot.util import blue_red_colormap
 import numpy as np
@@ -27,19 +27,19 @@ root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
 predictor_file = '%s/cfs_analysis_2007-2009_hgt-thick_300-500-700_NH_T2.nc' % root_directory
 
 # Model name
-model = '%s/dlwp_1979-2010_hgt_500_NH_T2F_FINAL-lstm' % root_directory
-model_label = r'$Z$ LSTM'
+model = '%s/dlwp_6h_tau_z-tau-out_t3' % root_directory
+model_label = r'$\tau$ sequence'
 
 # Selection from the predictor file
-input_selection = {'variable': ['HGT']}
-output_selection = {'variable': ['HGT']}
-input_time_steps = 2
-output_time_steps = 2
+input_selection = {'variable': ['HGT', 'THICK']}
+output_selection = {'variable': ['HGT', 'THICK']}
+input_time_steps = 3
+output_time_steps = 3
 add_insolation = False
 
 # Date(s) of plots: the initialization times
 plot_dates = list(pd.date_range('2007-04-15', '2007-04-15', freq='D').to_pydatetime())
-num_plot_steps = 24
+num_plot_steps = 48
 model_dt = 6
 
 # Variable and level index to plot; scaling option
@@ -70,7 +70,7 @@ laplace_scale = 1.e4 * 9.81 / (2 * 7.29e-5)
 
 # Output file and other small details
 plot_directory = './Plots'
-plot_file_name = 'MAP_Z-lstm'
+plot_file_name = 'MAP_tau-t3'
 plot_file_type = 'png'
 
 
@@ -139,8 +139,7 @@ def laplacian(da, engine):
 if not isinstance(plot_dates, list):
     plot_dates = [plot_dates]
 
-max_forecast_steps = num_plot_steps * output_time_steps
-plot_f_hour = np.arange(model_dt, max_forecast_steps * model_dt + 1, model_dt)
+plot_f_hour = np.arange(model_dt, num_plot_steps * model_dt + 1, model_dt)
 
 if plot_laplace:
     from DLWP.barotropic.pyspharm_transforms import TransformsEngine
@@ -178,7 +177,7 @@ variable_std = data.sel(**selection).variables['std'].values
 
 #%% Make the verification and forecast
 
-verification = verify.verification_from_samples(data.sel(**selection), forecast_steps=max_forecast_steps, dt=model_dt)
+verification = verify.verification_from_samples(data.sel(**selection), forecast_steps=num_plot_steps, dt=model_dt)
 
 # Scale the verification
 if scale_variables:
@@ -199,12 +198,20 @@ if not hasattr(dlwp, 'is_convolutional'):
     for layer in dlwp.model.layers:
         if 'CONV' in layer.name.upper():
             dlwp.is_convolutional = True
+if isinstance(dlwp, DLWPFunctional):
+    if not hasattr(dlwp, '_n_steps'):
+        dlwp._n_steps = 6
+    if not hasattr(dlwp, 'time_dim'):
+        dlwp.time_dim = 2
+    sequence = dlwp._n_steps
+else:
+    sequence = None
 
 # Create data generator
 generator = SeriesDataGenerator(dlwp, data, batch_size=216,
                                 input_sel=input_selection, output_sel=output_selection,
                                 input_time_steps=input_time_steps, output_time_steps=output_time_steps,
-                                add_insolation=add_insolation)
+                                add_insolation=add_insolation, sequence=sequence)
 p_val, t_val = generator.generate([], scale_and_impute=False)
 
 # Create TimeSeriesEstimator
@@ -259,8 +266,8 @@ for date in plot_dates:
     print('Plotting for %s...' % date)
     date64 = np.datetime64(date)
 
-    for step in range(max_forecast_steps):
-        print('  image %d of %d...' % (step + 1, max_forecast_steps))
+    for step in range(num_plot_steps):
+        print('  image %d of %d...' % (step + 1, num_plot_steps))
         f_hour = model_dt * (step + 1)
         plot_time = date + timedelta(hours=f_hour)
 

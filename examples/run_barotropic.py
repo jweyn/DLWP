@@ -49,6 +49,8 @@ for init_time in cfs.Dataset.time.values:
             out_count += 1
         baro.step_forward()
 
+    if np.any(np.isnan(height[:, init_count])) or np.any(np.isinf(height[:, init_count])):
+        print(' *** warning: overflow or NaN encountered')
     init_count += 1
 
 result_ds = xr.Dataset({

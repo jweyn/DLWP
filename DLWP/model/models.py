@@ -428,7 +428,7 @@ class DLWPFunctional(object):
         steps = int(np.ceil(time_steps / self._n_steps / self.time_dim))
         out_steps = steps * self._n_steps
         time_series = np.full((out_steps,) + predictors.shape, np.nan, dtype=np.float32)
-        p = predictors
+        p = predictors.copy()
         sample_dim = p.shape[0]
         if self.is_recurrent:
             feature_shape = p.shape[2:]

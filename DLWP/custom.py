@@ -12,6 +12,7 @@ from keras import backend as K
 from keras.callbacks import Callback, EarlyStopping
 from keras.layers.convolutional import ZeroPadding2D, ZeroPadding3D
 from keras.layers.local import LocallyConnected2D
+from keras.layers import Lambda, Layer
 from keras.utils import conv_utils
 from keras.engine.base_layer import InputSpec
 import numpy as np
@@ -298,6 +299,38 @@ class PeriodicPadding3D(ZeroPadding3D):
             # Pad the depth
             outputs = K.concatenate([outputs[:, low_slice], outputs, outputs[:, high_slice]], axis=1)
         return outputs
+
+
+class Slice(Layer):
+    """
+    Implementation of a slicing layer for the Keras functional API.
+    """
+    def __init__(self, start, end, step=None, axis=1):
+        """
+        Initialize a slicing layer.
+
+        :param start: int: start index
+        :param end: int: end index
+        :param axis: int: axis along which to slice
+        """
+        super(Slice, self).__init__()
+        self._layer = None
+        self.start = int(start)
+        self.end = int(end)
+        self.step = None if step is None else int(step)
+        self.axis = int(axis)
+        if self.axis < 0:
+            raise ValueError("'Slice' layer can only work on a specified axis > 0")
+
+        self._layer = Lambda(self.func)
+
+    def func(self, x):
+        slices = [slice(None)] * self.axis
+        slices.append(slice(self.start, self.end, self.step))
+        return x[tuple(slices)]
+
+    def __call__(self, x, **kwargs):
+        return self._layer(x)
 
 
 class RowConnected2D(LocallyConnected2D):

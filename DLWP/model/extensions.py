@@ -11,10 +11,11 @@ Extension classes for doing more with models, generators, and so on.
 import numpy as np
 import xarray as xr
 import pandas as pd
-from .models import DLWPNeuralNet
+from .models import DLWPNeuralNet, DLWPFunctional
 from .models_torch import DLWPTorchNN
 from .generators import DataGenerator, SmartDataGenerator, SeriesDataGenerator
 from ..util import insolation
+import warnings
 
 
 class TimeSeriesEstimator(object):
@@ -31,10 +32,16 @@ class TimeSeriesEstimator(object):
         :param model: DLWP model instance
         :param generator: DLWP DataGenerator instance
         """
-        if not isinstance(model, (DLWPNeuralNet, DLWPTorchNN)):
+        if not isinstance(model, (DLWPNeuralNet, DLWPFunctional, DLWPTorchNN)):
             raise TypeError("'model' must be a valid instance of a DLWP model class")
         if not isinstance(generator, (DataGenerator, SmartDataGenerator, SeriesDataGenerator)):
             raise TypeError("'generator' must be a valid instance of a DLWP generator class")
+        if isinstance(model, DLWPFunctional):
+            warnings.warn('DLWPFunctional models are only partially supported by TimeSeriesEstimator. The '
+                          'inputs/outputs to the model must be the same.')
+            if hasattr(generator, '_output_time_steps') and model.time_dim != generator._output_time_steps:
+                raise ValueError('the expected model time_dim (%d) and generator output_time_steps (%d) do not match' %
+                                 (model.time_dim, generator._output_time_steps))
         self.model = model
         self.generator = generator
         self._add_insolation = generator._add_insolation if hasattr(generator, '_add_insolation') else False
@@ -161,6 +168,7 @@ class TimeSeriesEstimator(object):
             else:
                 es = self._output_time_steps
                 in_times = np.arange(self._input_time_steps) + (self._output_time_steps - self._input_time_steps)
+        effective_steps = int(np.ceil(steps / es))
 
         # Load data from the generator
         p, t = self.generator.generate([])
@@ -180,61 +188,70 @@ class TimeSeriesEstimator(object):
             p_mean = p.mean(axis=0)
 
         # Giant forecast array
-        result = np.full((steps,) + t.shape, np.nan, dtype=np.float32)
+        if isinstance(t, (list, tuple)):
+            t_shape = t[0].shape
+        else:
+            t_shape = t.shape
+        result = np.full((effective_steps,) + t_shape, np.nan, dtype=np.float32)
 
-        # Iterate prediction forward
-        for s in range(steps):
-            if 'verbose' in kwargs and kwargs['verbose'] > 0:
-                print('Time step %d/%d' % (s + 1, steps))
-            result[s] = self.model.predict(p_da.values.reshape(p_shape), **kwargs)
+        if isinstance(self.model, DLWPFunctional):
+            # For the DLWPFunctional model, just use its predict_timeseries API, which handles effective steps
+            result[:] = self.model.predict_timeseries(p_da.values.reshape(p_shape), steps, keep_time_dim=True,
+                                                      **kwargs).reshape((-1,) + t_shape)[:effective_steps, ...]
+        else:
+            # Iterate prediction forward for a regular DLWP Sequential NN
+            for s in range(effective_steps):
+                if 'verbose' in kwargs and kwargs['verbose'] > 0:
+                    print('Time step %d/%d' % (s + 1, effective_steps))
+                result[s] = self.model.predict(p_da.values.reshape(p_shape), **kwargs)
 
-            # Add metadata to the prediction
-            r_da = xr.DataArray(
-                result[s].reshape((p_shape[0], self._output_time_steps, -1,) +
-                                  self.generator.convolution_shape[-2:]),
-                coords=[self.generator.ds.sample[:self.generator._n_sample] + es * self._dt,
-                        np.arange(self._output_time_steps), self._output_sel['varlev'],
-                        self.generator.ds.lat, self.generator.ds.lon],
-                dims=['sample', 'time_step', 'varlev', 'lat', 'lon']
-            )
+                # Add metadata to the prediction
+                r_da = xr.DataArray(
+                    result[s].reshape((p_shape[0], self._output_time_steps, -1,) +
+                                      self.generator.convolution_shape[-2:]),
+                    coords=[self.generator.ds.sample[:self.generator._n_sample] + es * self._dt,
+                            np.arange(self._output_time_steps), self._output_sel['varlev'],
+                            self.generator.ds.lat, self.generator.ds.lon],
+                    dims=['sample', 'time_step', 'varlev', 'lat', 'lon']
+                )
 
-            # Re-index the predictors to the new forward time step
-            p_da = p_da.reindex(sample=r_da.sample, method=None)
+                # Re-index the predictors to the new forward time step
+                p_da = p_da.reindex(sample=r_da.sample, method=None)
 
-            # Impute values extending beyond data availability
-            if impute:
-                # Calculate mean values for the added time steps after re-indexing
-                p_da[-es:] = np.concatenate([p_mean[np.newaxis, ...]] * es)
+                # Impute values extending beyond data availability
+                if impute:
+                    # Calculate mean values for the added time steps after re-indexing
+                    p_da[-es:] = np.concatenate([p_mean[np.newaxis, ...]] * es)
 
-            # Take care of the known insolation for added time steps
-            if self._add_insolation:
-                p_da.loc[{'varlev': 'SOL'}][-es:] = \
-                    np.concatenate([insolation(p_da.sample[-es:] + n * self._dt,
-                                               self.generator.ds.lat, self.generator.ds.lon)[:, np.newaxis]
-                                    for n in range(self._input_time_steps)], axis=1)
+                # Take care of the known insolation for added time steps
+                if self._add_insolation:
+                    p_da.loc[{'varlev': 'SOL'}][-es:] = \
+                        np.concatenate([insolation(p_da.sample[-es:] + n * self._dt,
+                                                   self.generator.ds.lat, self.generator.ds.lon)[:, np.newaxis]
+                                        for n in range(self._input_time_steps)], axis=1)
 
-            # Replace the predictors that exist in the result with the result. Any that do not exist are automatically
-            # inherited from the known predictor data (or imputed data).
-            if keep_inputs:
-                loc_dict = dict(varlev=self._outputs_in_inputs['varlev'], time_step=p_da.time_step[-es:])
-                p_da.loc[loc_dict] = r_da.loc[{'varlev': self._outputs_in_inputs['varlev']}]
-            else:
-                if prefer_first_times:
-                    p_da.loc[{'varlev': self._outputs_in_inputs['varlev']}] = \
-                        r_da.loc[{'varlev': self._outputs_in_inputs['varlev']}][:, :self._input_time_steps]
+                # Replace the predictors that exist in the result with the result. Any that do not exist are
+                # automatically inherited from the known predictor data (or imputed data).
+                if keep_inputs:
+                    loc_dict = dict(varlev=self._outputs_in_inputs['varlev'], time_step=p_da.time_step[-es:])
+                    p_da.loc[loc_dict] = r_da.loc[{'varlev': self._outputs_in_inputs['varlev']}]
                 else:
-                    p_da.loc[{'varlev': self._outputs_in_inputs['varlev']}] = \
-                        r_da.loc[{'varlev': self._outputs_in_inputs['varlev']}][:, -self._input_time_steps:]
+                    if prefer_first_times:
+                        p_da.loc[{'varlev': self._outputs_in_inputs['varlev']}] = \
+                            r_da.loc[{'varlev': self._outputs_in_inputs['varlev']}][:, :self._input_time_steps]
+                    else:
+                        p_da.loc[{'varlev': self._outputs_in_inputs['varlev']}] = \
+                            r_da.loc[{'varlev': self._outputs_in_inputs['varlev']}][:, -self._input_time_steps:]
 
         # Return a DataArray. Keep the actual model initialization, that is, the last available time in the inputs,
         # as the time
-        result = result.reshape((steps, p_shape[0], self._output_time_steps, -1,) +
+        result = result.reshape((effective_steps, p_shape[0], self._output_time_steps, -1,) +
                                 self.generator.convolution_shape[-2:])
         if keep_time_dim:
             result = xr.DataArray(
                 result,
                 coords=[
-                    np.arange(self._dt.values, (steps * es + 1) * self._dt.values, es * self._dt.values),
+                    np.arange(self._dt.values, (steps + 1) * self._dt.values, es * self._dt.values),
                     self.generator.ds.sample[:self.generator._n_sample] + (self._input_time_steps - 1) * self._dt,
                     range(self._output_time_steps),
                     self._output_sel['varlev'],
@@ -253,7 +270,7 @@ class TimeSeriesEstimator(object):
             result = xr.DataArray(
                 result,
                 coords=[
-                    np.arange(self._dt.values, (steps * es + 1) * self._dt.values, self._dt.values),
+                    np.arange(self._dt.values, (steps + 1) * self._dt.values, self._dt.values),
                     self.generator.ds.sample[:self.generator._n_sample] + (self._input_time_steps - 1) * self._dt,
                     self._output_sel['varlev'],
                     self.generator.ds.lat,
@@ -261,6 +278,7 @@ class TimeSeriesEstimator(object):
                 ],
                 dims=['f_hour', 'time', 'varlev', 'lat', 'lon']
             )
+            result = result.isel(f_hour=slice(0, steps))
 
         # Expand back out to variable/level pairs
         if self._uses_varlev:
