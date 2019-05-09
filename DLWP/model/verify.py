@@ -200,7 +200,7 @@ def verification_from_samples(ds, all_ds=None, forecast_steps=1, dt=6):
     :return: xarray.DataArray: verification with forecast hour as the first dimension
     """
     forecast_steps = int(forecast_steps)
-    if dt < 1:
+    if forecast_steps < 1:
         raise ValueError("'forecast_steps' must be an integer >= 1")
     dt = int(dt)
     if dt < 1:
@@ -237,7 +237,7 @@ def verification_from_series(ds, all_ds=None, forecast_steps=1, dt=6):
     :return: xarray.DataArray: verification with forecast hour as the first dimension
     """
     forecast_steps = int(forecast_steps)
-    if dt < 1:
+    if forecast_steps < 1:
         raise ValueError("'forecast_steps' must be an integer >= 1")
     dt = int(dt)
     if dt < 1:
@@ -256,7 +256,7 @@ def verification_from_series(ds, all_ds=None, forecast_steps=1, dt=6):
     for d, date in enumerate(ds.sample.values):
         verification[:, d] = valid_da.reindex(
             sample=pd.date_range(date + np.timedelta64(timedelta(hours=dt)),
-                                 date + np.timedelta64(timedelta(hours=dt * (forecast_steps - 1))),
+                                 date + np.timedelta64(timedelta(hours=dt * forecast_steps)),
                                  freq='%sH' % int(dt)),
             method=None
         ).values
