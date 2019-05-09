@@ -16,12 +16,11 @@ import xarray as xr
 from datetime import datetime
 from DLWP.model import DLWPFunctional, SeriesDataGenerator
 from DLWP.util import save_model, train_test_split_ind
-from keras.regularizers import l2
-from keras.losses import mean_squared_error
 from keras.callbacks import History, TensorBoard
 
 from keras.layers import Input, ZeroPadding2D, Conv2D, MaxPooling2D, UpSampling2D, concatenate
-from DLWP.custom import PeriodicPadding2D, RNNResetStates, EarlyStoppingMin, slice_layer
+from DLWP.custom import PeriodicPadding2D, RNNResetStates, EarlyStoppingMin, slice_layer, latitude_weighted_loss
+from keras.losses import mean_squared_error
 from keras.models import Model
 
 
@@ -247,8 +246,15 @@ if loss_by_step is None:
     loss_by_step = [1./integration_steps] * integration_steps
 model = Model(inputs=input_0, outputs=outputs)
 
+# Example custom loss function: pass to loss= in build_model()
+if weight_loss:
+    loss_function = latitude_weighted_loss(mean_squared_error, generator.ds.lat.values,
+                                           generator.output_convolution_shape, axis=-2, weighting='midlatitude')
+else:
+    loss_function = 'mse'
+
 # Build the DLWP model
-dlwp.build_model(model, loss='mse', loss_weights=loss_by_step, optimizer='adam', metrics=['mae'], gpus=n_gpu)
+dlwp.build_model(model, loss=loss_function, loss_weights=loss_by_step, optimizer='adam', metrics=['mae'], gpus=n_gpu)
 print(dlwp.base_model.summary())
 
 

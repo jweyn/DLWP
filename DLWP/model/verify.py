@@ -253,7 +253,7 @@ def verification_from_series(ds, all_ds=None, forecast_steps=1, dt=6):
         valid_da = all_ds.predictors
     else:
         valid_da = ds.predictors
-    for d, date in enumerate(ds.sample[:]):
+    for d, date in enumerate(ds.sample.values):
         verification[:, d] = valid_da.reindex(
             sample=pd.date_range(date + np.timedelta64(timedelta(hours=dt)),
                                  date + np.timedelta64(timedelta(hours=dt * (forecast_steps - 1))),
