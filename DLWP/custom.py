@@ -603,7 +603,7 @@ def latitude_weighted_loss(loss_function, lats, output_shape, axis=-2, weighting
 
     weights = K.cos(lat_tensor * np.pi / 180.)
     if weighting == 'midlatitude':
-        weights = weights - 0.25 * K.sin(lat_tensor * 2 * np.pi / 180.)
+        weights = weights + 0.5 * K.pow(K.sin(lat_tensor * 2 * np.pi / 180.), 2.)
 
     weight_shape = output_shape[axis:]
     for d in weight_shape[1:]:

@@ -333,15 +333,15 @@ layers = (
 
 # Example custom loss function: pass to loss= in build_model()
 if weight_loss:
-    loss_function = latitude_weighted_loss(mean_squared_error, generator.ds.lat.values, generator.convolution_shape,
-                                           axis=-2, weighting='midlatitude')
+    loss_function = latitude_weighted_loss(mean_squared_error, generator.ds.lat.values,
+                                           generator.output_convolution_shape, axis=-2, weighting='midlatitude')
 else:
     loss_function = 'mse'
 
 # Build the model
 try:
     dlwp.build_model(layers, loss=loss_function, optimizer='adam', metrics=['mae'], gpus=n_gpu)
-except ValueError:
+except (ValueError, IndexError):
     for layer in dlwp.base_model.layers:
         print(layer.name, layer.output_shape)
     raise
