@@ -23,7 +23,7 @@ from azureml.core import Run
 
 from keras.layers import Input, ZeroPadding2D, Conv2D, MaxPooling2D, UpSampling2D, concatenate
 from DLWP.custom import PeriodicPadding2D, RNNResetStates, EarlyStoppingMin, RunHistory, slice_layer, \
-    latitude_weighted_loss
+    latitude_weighted_loss, RowConnected2D
 from keras.losses import mean_squared_error
 from keras.models import Model
 
@@ -66,7 +66,8 @@ lambda_ = 1.e-4
 weight_loss = False
 loss_by_step = None
 shuffle = True
-skip_connections = True
+skip_connections = False
+latitude_dependent = False
 
 # Data parameters. Specify the input/output variables/levels and input/output time steps. DLWPFunctional requires that
 # the inputs and outputs match exactly (for now). Ensure that the selections use LISTS of values (even for only 1) to
@@ -213,7 +214,14 @@ conv_2d_5 = Conv2D(16 if skip_connections else 32, 3, **{
         'activation': 'tanh',
         'data_format': 'channels_first'
     })
-conv_2d_6 = Conv2D(cso[0], 5, **{
+if latitude_dependent:
+    conv_2d_6 = RowConnected2D(cso[0], 5, **{
+        'padding': 'valid',
+        'activation': 'linear',
+        'data_format': 'channels_first'
+    })
+else:
+    conv_2d_6 = Conv2D(cso[0], 5, **{
         'padding': 'valid',
         'activation': 'linear',
         'data_format': 'channels_first'

@@ -438,7 +438,10 @@ class DLWPFunctional(object):
             if 'verbose' in kwargs and kwargs['verbose'] > 0:
                 print('Prediction step %d/%d' % (t + 1, steps))
             result = self.predict(p, **kwargs)
-            p[:] = result[-1]
+            if self._n_steps == 1:
+                p[:] = result[:]
+            else:
+                p[:] = result[-1]
             time_series[t * self._n_steps:(t + 1) * self._n_steps, ...] = np.stack(result, axis=0)
         time_series = time_series.reshape((out_steps, sample_dim, self.time_dim, -1) + feature_shape[1:])
         if not keep_time_dim:

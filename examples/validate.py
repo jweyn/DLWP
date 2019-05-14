@@ -257,6 +257,7 @@ if baro_ds is not None and plot_mse:
 
     # Select the correct number of forecast hours
     baro_forecast = baro_ds.isel(f_hour=(baro_ds.f_hour > 0)).isel(f_hour=slice(None, num_forecast_steps))
+    baro_forecast_steps = int(np.min([num_forecast_steps, baro_forecast.dims['f_hour']]))
     baro_f = baro_forecast.variables['Z'].values
 
     # Normalize by the same std and mean as the predictor dataset
@@ -264,9 +265,9 @@ if baro_ds is not None and plot_mse:
     z500_std = data.sel(**selection).variables['std'].values
     baro_f = (baro_f - z500_mean) / z500_std
 
-    mse.append(verify.forecast_error(baro_f, verification.values))
+    mse.append(verify.forecast_error(baro_f[:baro_forecast_steps], verification.values[:baro_forecast_steps]))
     model_labels.append('Barotropic')
-    f_hours.append(np.arange(dt, num_forecast_steps * dt + 1., dt))
+    f_hours.append(np.arange(dt, baro_forecast_steps * dt + 1., dt))
     baro_f, baro_v = None, None
 
 
@@ -284,6 +285,7 @@ if cfs_ds is not None and plot_mse:
 
     # Select the correct number of forecast hours
     cfs_forecast = cfs_ds.isel(f_hour=(cfs_ds.f_hour > 0)).isel(f_hour=slice(None, num_forecast_steps))
+    cfs_forecast_steps = int(np.min([num_forecast_steps, cfs_forecast.dims['f_hour']]))
     cfs_f = cfs_forecast.variables['z500'].values
 
     # Normalize by the same std and mean as the predictor dataset
@@ -291,9 +293,9 @@ if cfs_ds is not None and plot_mse:
     z500_std = data.sel(**selection).variables['std'].values
     cfs_f = (cfs_f - z500_mean) / z500_std
 
-    mse.append(verify.forecast_error(cfs_f, verification.values))
+    mse.append(verify.forecast_error(cfs_f[:cfs_forecast_steps], verification.values[:cfs_forecast_steps]))
     model_labels.append('CFS')
-    f_hours.append(np.arange(dt, num_forecast_steps * dt + 1., dt))
+    f_hours.append(np.arange(dt, cfs_forecast_steps * dt + 1., dt))
     cfs_f, cfs_v = None, None
 
 
