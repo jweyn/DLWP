@@ -25,6 +25,7 @@ from keras.regularizers import l2
 from keras.losses import mean_squared_error
 from keras.callbacks import TensorBoard
 from azureml.core import Run
+import tensorflow as tf
 
 
 #%% Parse user arguments
@@ -40,10 +41,16 @@ parser.add_argument('--log-directory', type=str, dest='log_directory', default='
                     help='Destination for log files in root-directory')
 parser.add_argument('--temp-dir', type=str, dest='temp_dir', default='None',
                     help='If specified, copies the predictor file here for use during training (e.g., fast SSD)')
+parser.add_argument('--seed', type=int, dest='seed', default=-1,
+                    help='Specify random number seed >= 0')
 
 args = parser.parse_args()
 if args.temp_dir != 'None':
     os.makedirs(args.temp_dir, exist_ok=True)
+
+if args.seed >= 0:
+    np.random.seed(args.seed)
+    tf.set_random_seed(args.seed)
 
 
 #%% Parameters
@@ -56,14 +63,14 @@ log_directory = os.path.join(root_directory, args.log_directory)
 # NN parameters. Regularization is applied to LSTM layers by default. weight_loss indicates whether to weight the
 # loss function preferentially in the mid-latitudes.
 model_is_convolutional = True
-model_is_recurrent = True
+model_is_recurrent = False
 min_epochs = 200
 max_epochs = 1000
 patience = 50
 batch_size = 64
 lambda_ = 1.e-4
 weight_loss = False
-shuffle = False
+shuffle = True
 
 # Data parameters. Specify the input variables/levels, output variables/levels, and time steps in/out. Note that for
 # LSTM layers, the model can only predict effectively if the output time steps is 1 or equal to the input time steps.
@@ -82,7 +89,7 @@ add_solar = False
 load_memory = True
 
 # Use multiple GPUs, if available
-n_gpu = 2
+n_gpu = 1
 
 # Force use of the keras model.fit() method. May run faster in some instances, but uses (input_time_steps +
 # output_time_steps) times more memory.
@@ -181,155 +188,155 @@ else:
 # Up-sampling convolutional network with optional LSTM layer
 cs = generator.convolution_shape
 cso = generator.output_convolution_shape
-# layers = (
-#     # --- These layers add a convolutional LSTM at the beginning --- #
-#     # ('PeriodicPadding3D', ((0, 0, 2),), {
-#     #     'data_format': 'channels_first',
-#     #     'input_shape': cs
-#     # }),
-#     # ('ZeroPadding3D', ((0, 2, 0),), {'data_format': 'channels_first'}),
-#     # ('ConvLSTM2D', (cs[1], 3), {  # 4 * cs[1]
-#     #     'dilation_rate': 2,
-#     #     'padding': 'valid',
-#     #     'data_format': 'channels_first',
-#     #     'activation': 'tanh',
-#     #     'return_sequences': True,
-#     #     'kernel_regularizer': l2(lambda_)
-#     # }),
-#     # ('Reshape', ((cs[1] * cs[0], cs[2], cs[3]),), None),  # 4 * cs[1] * cs[0]
-#     # -------------------------------------------------------------- #
-#     ('PeriodicPadding2D', ((0, 2),), {
-#         'data_format': 'channels_first',
-#         'input_shape': cs
-#     }),
-#     ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
-#     ('Conv2D', (32, 3), {
-#         'dilation_rate': 2,
-#         'padding': 'valid',
-#         'activation': 'tanh',
-#         'data_format': 'channels_first'
-#     }),
-#     # ('BatchNormalization', None, {'axis': 1}),
-#     ('MaxPooling2D', (2,), {'data_format': 'channels_first'}),
-#     ('PeriodicPadding2D', ((0, 1),), {'data_format': 'channels_first'}),
-#     ('ZeroPadding2D', ((1, 0),), {'data_format': 'channels_first'}),
-#     ('Conv2D', (64, 3), {
-#         'dilation_rate': 1,
-#         'padding': 'valid',
-#         'activation': 'tanh',
-#         'data_format': 'channels_first'
-#     }),
-#     # ('BatchNormalization', None, {'axis': 1}),
-#     ('MaxPooling2D', (2,), {'data_format': 'channels_first'}),
-#     ('PeriodicPadding2D', ((0, 1),), {'data_format': 'channels_first'}),
-#     ('ZeroPadding2D', ((1, 0),), {'data_format': 'channels_first'}),
-#     ('Conv2D', (128, 3), {
-#         'dilation_rate': 1,
-#         'padding': 'valid',
-#         'activation': 'tanh',
-#         'data_format': 'channels_first'
-#     }),
-#     # ('BatchNormalization', None, {'axis': 1}),
-#     ('UpSampling2D', (2,), {'data_format': 'channels_first'}),
-#     ('PeriodicPadding2D', ((0, 1),), {'data_format': 'channels_first'}),
-#     ('ZeroPadding2D', ((1, 0),), {'data_format': 'channels_first'}),
-#     ('Conv2D', (64, 3), {
-#         'dilation_rate': 1,
-#         'padding': 'valid',
-#         'activation': 'tanh',
-#         'data_format': 'channels_first'
-#     }),
-#     # ('BatchNormalization', None, {'axis': 1}),
-#     ('UpSampling2D', (2,), {'data_format': 'channels_first'}),
-#     ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
-#     ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
-#     ('Conv2D', (32, 3), {
-#         'dilation_rate': 2,
-#         'padding': 'valid',
-#         'activation': 'tanh',
-#         'data_format': 'channels_first'
-#     }),
-#     # ('BatchNormalization', None, {'axis': 1}),
-#     ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
-#     ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
-#     # --- Change the number of filters to cso[0] * cso[1] for LSTM model, and uncomment the last Reshape layer --- #
-#     ('Conv2D', (cso[0], 5), {
-#         'padding': 'valid',
-#         'activation': 'linear',
-#         'data_format': 'channels_first'
-#     }),
-#     # ('Reshape', (cso,), None)
-# )
-
-# Fully-LSTM upsampling convolutional NN
 layers = (
-    ('PeriodicPadding3D', ((0, 0, 2),), {
+    # --- These layers add a convolutional LSTM at the beginning --- #
+    # ('PeriodicPadding3D', ((0, 0, 2),), {
+    #     'data_format': 'channels_first',
+    #     'input_shape': cs
+    # }),
+    # ('ZeroPadding3D', ((0, 2, 0),), {'data_format': 'channels_first'}),
+    # ('ConvLSTM2D', (cs[1], 3), {  # 4 * cs[1]
+    #     'dilation_rate': 2,
+    #     'padding': 'valid',
+    #     'data_format': 'channels_first',
+    #     'activation': 'tanh',
+    #     'return_sequences': True,
+    #     'kernel_regularizer': l2(lambda_)
+    # }),
+    # ('Reshape', ((cs[1] * cs[0], cs[2], cs[3]),), None),  # 4 * cs[1] * cs[0]
+    # -------------------------------------------------------------- #
+    ('PeriodicPadding2D', ((0, 2),), {
         'data_format': 'channels_first',
         'input_shape': cs
     }),
-    ('ZeroPadding3D', ((0, 2, 0),), {'data_format': 'channels_first'}),
-    ('ConvLSTM2D', (16, 3), {
+    ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
+    ('Conv2D', (32, 3), {
         'dilation_rate': 2,
         'padding': 'valid',
-        'data_format': 'channels_first',
         'activation': 'tanh',
-        'return_sequences': True,
-        'kernel_regularizer': l2(lambda_)
+        'data_format': 'channels_first'
     }),
-    ('MaxPooling3D', ((1, 2, 2),), {'data_format': 'channels_first'}),
-    ('PeriodicPadding3D', ((0, 0, 1),), {'data_format': 'channels_first'}),
-    ('ZeroPadding3D', ((0, 1, 0),), {'data_format': 'channels_first'}),
-    ('ConvLSTM2D', (32, 3), {
+    # ('BatchNormalization', None, {'axis': 1}),
+    ('MaxPooling2D', (2,), {'data_format': 'channels_first'}),
+    ('PeriodicPadding2D', ((0, 1),), {'data_format': 'channels_first'}),
+    ('ZeroPadding2D', ((1, 0),), {'data_format': 'channels_first'}),
+    ('Conv2D', (64, 3), {
         'dilation_rate': 1,
         'padding': 'valid',
-        'data_format': 'channels_first',
         'activation': 'tanh',
-        'return_sequences': True,
-        'kernel_regularizer': l2(lambda_)
+        'data_format': 'channels_first'
     }),
-    ('MaxPooling3D', ((1, 2, 2),), {'data_format': 'channels_first'}),
-    ('PeriodicPadding3D', ((0, 0, 1),), {'data_format': 'channels_first'}),
-    ('ZeroPadding3D', ((0, 1, 0),), {'data_format': 'channels_first'}),
-    ('ConvLSTM2D', (64, 3), {
+    # ('BatchNormalization', None, {'axis': 1}),
+    ('MaxPooling2D', (2,), {'data_format': 'channels_first'}),
+    ('PeriodicPadding2D', ((0, 1),), {'data_format': 'channels_first'}),
+    ('ZeroPadding2D', ((1, 0),), {'data_format': 'channels_first'}),
+    ('Conv2D', (128, 3), {
         'dilation_rate': 1,
         'padding': 'valid',
-        'data_format': 'channels_first',
         'activation': 'tanh',
-        'return_sequences': True,
-        'kernel_regularizer': l2(lambda_)
+        'data_format': 'channels_first'
     }),
-    ('UpSampling3D', ((1, 2, 2),), {'data_format': 'channels_first'}),
-    ('PeriodicPadding3D', ((0, 0, 1),), {'data_format': 'channels_first'}),
-    ('ZeroPadding3D', ((0, 1, 0),), {'data_format': 'channels_first'}),
-    ('ConvLSTM2D', (32, 3), {
+    # ('BatchNormalization', None, {'axis': 1}),
+    ('UpSampling2D', (2,), {'data_format': 'channels_first'}),
+    ('PeriodicPadding2D', ((0, 1),), {'data_format': 'channels_first'}),
+    ('ZeroPadding2D', ((1, 0),), {'data_format': 'channels_first'}),
+    ('Conv2D', (64, 3), {
         'dilation_rate': 1,
         'padding': 'valid',
-        'data_format': 'channels_first',
         'activation': 'tanh',
-        'return_sequences': True,
-        'kernel_regularizer': l2(lambda_)
+        'data_format': 'channels_first'
     }),
-    ('UpSampling3D', ((1, 2, 2),), {'data_format': 'channels_first'}),
-    ('PeriodicPadding3D', ((0, 0, 2),), {'data_format': 'channels_first'}),
-    ('ZeroPadding3D', ((0, 2, 0),), {'data_format': 'channels_first'}),
-    ('ConvLSTM2D', (16, 3), {
+    # ('BatchNormalization', None, {'axis': 1}),
+    ('UpSampling2D', (2,), {'data_format': 'channels_first'}),
+    ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
+    ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
+    ('Conv2D', (32, 3), {
         'dilation_rate': 2,
         'padding': 'valid',
-        'data_format': 'channels_first',
         'activation': 'tanh',
-        'return_sequences': True,
-        'kernel_regularizer': l2(lambda_)
+        'data_format': 'channels_first'
     }),
-    ('PeriodicPadding3D', ((0, 0, 2),), {'data_format': 'channels_first'}),
-    ('ZeroPadding3D', ((0, 2, 0),), {'data_format': 'channels_first'}),
-    ('ConvLSTM2D', (cso[0], 5), {
-        'dilation_rate': 1,
+    # ('BatchNormalization', None, {'axis': 1}),
+    ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
+    ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
+    # --- Change the number of filters to cso[0] * cso[1] for LSTM model, and uncomment the last Reshape layer --- #
+    ('Conv2D', (cso[0], 5), {
         'padding': 'valid',
-        'data_format': 'channels_first',
         'activation': 'linear',
-        'return_sequences': True,
+        'data_format': 'channels_first'
     }),
+    # ('Reshape', (cso,), None)
 )
+
+# # Fully-LSTM upsampling convolutional NN
+# layers = (
+#     ('PeriodicPadding3D', ((0, 0, 2),), {
+#         'data_format': 'channels_first',
+#         'input_shape': cs
+#     }),
+#     ('ZeroPadding3D', ((0, 2, 0),), {'data_format': 'channels_first'}),
+#     ('ConvLSTM2D', (16, 3), {
+#         'dilation_rate': 2,
+#         'padding': 'valid',
+#         'data_format': 'channels_first',
+#         'activation': 'tanh',
+#         'return_sequences': True,
+#         'kernel_regularizer': l2(lambda_)
+#     }),
+#     ('MaxPooling3D', ((1, 2, 2),), {'data_format': 'channels_first'}),
+#     ('PeriodicPadding3D', ((0, 0, 1),), {'data_format': 'channels_first'}),
+#     ('ZeroPadding3D', ((0, 1, 0),), {'data_format': 'channels_first'}),
+#     ('ConvLSTM2D', (32, 3), {
+#         'dilation_rate': 1,
+#         'padding': 'valid',
+#         'data_format': 'channels_first',
+#         'activation': 'tanh',
+#         'return_sequences': True,
+#         'kernel_regularizer': l2(lambda_)
+#     }),
+#     ('MaxPooling3D', ((1, 2, 2),), {'data_format': 'channels_first'}),
+#     ('PeriodicPadding3D', ((0, 0, 1),), {'data_format': 'channels_first'}),
+#     ('ZeroPadding3D', ((0, 1, 0),), {'data_format': 'channels_first'}),
+#     ('ConvLSTM2D', (64, 3), {
+#         'dilation_rate': 1,
+#         'padding': 'valid',
+#         'data_format': 'channels_first',
+#         'activation': 'tanh',
+#         'return_sequences': True,
+#         'kernel_regularizer': l2(lambda_)
+#     }),
+#     ('UpSampling3D', ((1, 2, 2),), {'data_format': 'channels_first'}),
+#     ('PeriodicPadding3D', ((0, 0, 1),), {'data_format': 'channels_first'}),
+#     ('ZeroPadding3D', ((0, 1, 0),), {'data_format': 'channels_first'}),
+#     ('ConvLSTM2D', (32, 3), {
+#         'dilation_rate': 1,
+#         'padding': 'valid',
+#         'data_format': 'channels_first',
+#         'activation': 'tanh',
+#         'return_sequences': True,
+#         'kernel_regularizer': l2(lambda_)
+#     }),
+#     ('UpSampling3D', ((1, 2, 2),), {'data_format': 'channels_first'}),
+#     ('PeriodicPadding3D', ((0, 0, 2),), {'data_format': 'channels_first'}),
+#     ('ZeroPadding3D', ((0, 2, 0),), {'data_format': 'channels_first'}),
+#     ('ConvLSTM2D', (16, 3), {
+#         'dilation_rate': 2,
+#         'padding': 'valid',
+#         'data_format': 'channels_first',
+#         'activation': 'tanh',
+#         'return_sequences': True,
+#         'kernel_regularizer': l2(lambda_)
+#     }),
+#     ('PeriodicPadding3D', ((0, 0, 2),), {'data_format': 'channels_first'}),
+#     ('ZeroPadding3D', ((0, 2, 0),), {'data_format': 'channels_first'}),
+#     ('ConvLSTM2D', (cso[0], 5), {
+#         'dilation_rate': 1,
+#         'padding': 'valid',
+#         'data_format': 'channels_first',
+#         'activation': 'linear',
+#         'return_sequences': True,
+#     }),
+# )
 
 # Example custom loss function: pass to loss= in build_model()
 if weight_loss:
@@ -381,16 +388,23 @@ end_time = time.time()
 
 # Save the model
 if model_file is not None:
+    os.makedirs(os.path.sep.join(model_file.split(os.path.sep)[:-1]), exist_ok=True)
     save_model(dlwp, model_file, history=history)
     print('Wrote model %s' % model_file)
 
 # Evaluate the model
 print("\nTrain time -- %s seconds --" % (end_time - start_time))
 print('Train loss:', history.history['loss'][-patience - 1])
-print('Train mean absolute error:', history.history['mean_absolute_error'][-patience - 1])
 run.log('TRAIN_LOSS', history.history['loss'][-patience - 1])
+try:
+    print('Train mean absolute error:', history.history['mean_absolute_error'][-patience - 1])
+except KeyError:
+    pass
 if validation_data is not None:
     score = dlwp.evaluate(*val_generator.generate([]), verbose=0)
     print('Validation loss:', score[0])
-    print('Validation mean absolute error:', score[1])
+    try:
+        print('Validation mean absolute error:', score[1])
+    except:
+        pass
     run.log('VAL_LOSS', score[0])

@@ -27,14 +27,14 @@ root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
 predictor_file = '%s/cfs_analysis_2007-2009_hgt-thick_300-500-700_NH_T2.nc' % root_directory
 
 # Model name
-model = '%s/dlwp_6h_tau_z-tau-out_t3' % root_directory
-model_label = r'$\tau$ sequence'
+model = '%s/dlwp_6h_tau_z-tau-out_t2seq6-skip' % root_directory
+model_label = r'$\tau$ sequence-skip'
 
 # Selection from the predictor file
 input_selection = {'variable': ['HGT', 'THICK']}
 output_selection = {'variable': ['HGT', 'THICK']}
-input_time_steps = 3
-output_time_steps = 3
+input_time_steps = 2
+output_time_steps = 2
 add_insolation = False
 
 # Date(s) of plots: the initialization times
@@ -70,7 +70,7 @@ laplace_scale = 1.e4 * 9.81 / (2 * 7.29e-5)
 
 # Output file and other small details
 plot_directory = './Plots'
-plot_file_name = 'MAP_tau-t3'
+plot_file_name = 'MAP_tau-t2seq6-skip'
 plot_file_type = 'png'
 
 
@@ -274,8 +274,8 @@ for date in plot_dates:
         file_name_complete = '%s/%s_%s_f%03d.%s' % (plot_directory, plot_file_name,
                                                     datetime.strftime(date, '%Y%m%d%H'), step + 1, plot_file_type)
 
-        make_plot(basemap, plot_time, scale_factor * verification.sel(sample=date64, f_hour=f_hour),
+        make_plot(basemap, plot_time, scale_factor * verification.sel(time=date64, f_hour=f_hour),
                   forecast=scale_factor * forecast.sel(time=date64, f_hour=np.timedelta64(f_hour, 'h')),
-                  fill=None if not plot_laplace else (verification_lap.sel(sample=date64, f_hour=f_hour),
+                  fill=None if not plot_laplace else (verification_lap.sel(time=date64, f_hour=f_hour),
                                                       forecast_lap.sel(time=date64, f_hour=np.timedelta64(f_hour, 'h'))),
                   file_name=file_name_complete)

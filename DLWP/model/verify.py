@@ -206,7 +206,7 @@ def verification_from_samples(ds, all_ds=None, forecast_steps=1, dt=6):
     if dt < 1:
         raise ValueError("'dt' must be an integer >= 1")
     dims = [d for d in ds.predictors.dims if d.lower() != 'time_step']
-    f_hour = np.arange(dt, dt * forecast_steps + 1, dt)
+    f_hour = np.arange(dt, dt * forecast_steps + 1, dt).astype('timedelta64[h]')
     verification = xr.DataArray(
         np.full([forecast_steps] + [ds.dims[d] for d in dims], np.nan, dtype=np.float32),
         coords=[f_hour] + [ds[d] for d in dims],
@@ -222,7 +222,7 @@ def verification_from_samples(ds, all_ds=None, forecast_steps=1, dt=6):
                                  freq='%sH' % int(dt)),
             method=None
         ).values
-    return verification
+    return verification.rename({'sample': 'time'})
 
 
 def verification_from_series(ds, all_ds=None, forecast_steps=1, dt=6):
@@ -243,7 +243,7 @@ def verification_from_series(ds, all_ds=None, forecast_steps=1, dt=6):
     if dt < 1:
         raise ValueError("'dt' must be an integer >= 1")
     dims = [d for d in ds.predictors.dims if d.lower() != 'time_step']
-    f_hour = np.arange(dt, dt * forecast_steps + 1, dt)
+    f_hour = np.arange(dt, dt * forecast_steps + 1, dt).astype('timedelta64[h]')
     verification = xr.DataArray(
         np.full([forecast_steps] + [ds.dims[d] for d in dims], np.nan, dtype=np.float32),
         coords=[f_hour] + [ds[d] for d in dims],
@@ -260,4 +260,4 @@ def verification_from_series(ds, all_ds=None, forecast_steps=1, dt=6):
                                  freq='%sH' % int(dt)),
             method=None
         ).values
-    return verification
+    return verification.rename({'sample': 'time'})
