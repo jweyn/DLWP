@@ -20,13 +20,13 @@ def forecast_error(forecast, valid, method='mse', axis=None):
 
     :param forecast: ndarray: forecast from a DLWP model (forecast hour is first axis)
     :param valid: ndarray: validation target data for the predictors the forecast was made on
-    :param method: str: 'mse' for mean squared error or 'mae' for mean absolute error
+    :param method: str: 'mse' for mean squared error, 'mae' for mean absolute error, 'rmse' for root-mean-square
     :param axis: int, tuple, or None: take the mean of the error along this axis. Regardless of this setting, the
         forecast hour will be the first dimension.
     :return: ndarray: forecast error with forecast hour as the first dimension
     """
-    if method not in ['mse', 'mae']:
-        raise ValueError("'method' must be 'mse' or 'mae'")
+    if method not in ['mse', 'mae', 'rmse']:
+        raise ValueError("'method' must be 'mse', 'rmse', or 'mae'")
     n_f = forecast.shape[0]
     if len(forecast.shape) == len(valid.shape):
         # valid must include a forecast hour dimension
@@ -36,6 +36,8 @@ def forecast_error(forecast, valid, method='mse', axis=None):
             return np.nanmean((valid - forecast) ** 2., axis=axis)
         elif method == 'mae':
             return np.nanmean(np.abs(valid - forecast), axis=axis)
+        elif method == 'rmse':
+            return np.sqrt(np.nanmean((valid - forecast) ** 2., axis=axis))
     else:
         n_val = valid.shape[0]
         me = []
@@ -44,6 +46,8 @@ def forecast_error(forecast, valid, method='mse', axis=None):
                 me.append(np.nanmean((valid[f:] - forecast[f, :(n_val - f)]) ** 2., axis=axis))
             elif method == 'mae':
                 me.append(np.nanmean(np.abs(valid[f:] - forecast[f, :(n_val - f)]), axis=axis))
+            elif method == 'rmse':
+                me.append(np.sqrt(np.nanmean((valid[f:] - forecast[f, :(n_val - f)]) ** 2., axis=axis)))
         return np.array(me)
 
 
@@ -54,13 +58,13 @@ def persistence_error(predictors, valid, n_fhour, method='mse', axis=None):
     :param predictors: ndarray: predictor data
     :param valid: ndarray: validation target data
     :param n_fhour: int: number of steps to take forecast out to
-    :param method: 'mse' for mean squared error or 'mae' for mean absolute error
+    :param method: str: 'mse' for mean squared error, 'mae' for mean absolute error, 'rmse' for root-mean-square
     :param axis: int, tuple, or None: take the mean of the error along this axis. Regardless of this setting, the
         forecast hour will be the first dimension.
     :return: ndarray: persistence error with forecast hour as the first dimension
     """
-    if method not in ['mse', 'mae']:
-        raise ValueError("'method' must be 'mse' or 'mae'")
+    if method not in ['mse', 'mae', 'rmse']:
+        raise ValueError("'method' must be 'mse', 'rmse', or 'mae'")
     n_f = valid.shape[0]
     me = []
     for f in range(n_fhour):
@@ -68,6 +72,8 @@ def persistence_error(predictors, valid, n_fhour, method='mse', axis=None):
             me.append(np.nanmean((valid[f:] - predictors[:(n_f - f)]) ** 2., axis=axis))
         elif method == 'mae':
             me.append(np.nanmean(np.abs(valid[f:] - predictors[:(n_f - f)]), axis=axis))
+        elif method == 'rmse':
+            me.append(np.sqrt(np.nanmean((valid[f:] - predictors[:(n_f - f)]) ** 2., axis=axis)))
     return np.array(me)
 
 
@@ -77,13 +83,13 @@ def climo_error(valid, n_fhour, method='mse', axis=None):
 
     :param valid: ndarray: validation target data
     :param n_fhour: int: number of steps to take forecast out to
-    :param method: 'mse' for mean squared error or 'mae' for mean absolute error
+    :param method: str: 'mse' for mean squared error, 'mae' for mean absolute error, 'rmse' for root-mean-square
     :param axis: int, tuple, or None: take the mean of the error along this axis. Regardless of this setting, the
         forecast hour will be the first dimension.
     :return: ndarray: persistence error with forecast hour as the first dimension
     """
-    if method not in ['mse', 'mae']:
-        raise ValueError("'method' must be 'mse' or 'mae'")
+    if method not in ['mse', 'mae', 'rmse']:
+        raise ValueError("'method' must be 'mse', 'rmse', or 'mae'")
     n_f = valid.shape[0]
     me = []
     for f in range(n_fhour):
@@ -91,6 +97,8 @@ def climo_error(valid, n_fhour, method='mse', axis=None):
             me.append(np.nanmean((valid[:(n_f - f)] - np.nanmean(valid, axis=0)) ** 2., axis=axis))
         elif method == 'mae':
             me.append(np.nanmean(np.abs(valid[:(n_f - f)] - np.nanmean(valid, axis=0)), axis=axis))
+        elif method == 'rmse':
+            me.append(np.sqrt(np.nanmean((valid[:(n_f - f)] - np.nanmean(valid, axis=0)) ** 2., axis=axis)))
     return np.array(me)
 
 
@@ -101,12 +109,12 @@ def monthly_climo_error(da, val_set, n_fhour=None, method='mse', return_da=False
     :param da: xarray DataArray: contains a 'time' or 'sample' dimension
     :param val_set: list: list of times for which to calculate an error
     :param n_fhour: int or None: if int, multiplies the resulting error into a list of length n_fhour
-    :param method: 'mse' for mean squared error or 'mae' for mean absolute error
+    :param method: str: 'mse' for mean squared error, 'mae' for mean absolute error, 'rmse' for root-mean-square
     :param return_da: bool: if True, also returns a DataArray of the error from climatology
     :return: (int or list[, DataArray])
     """
-    if method not in ['mse', 'mae']:
-        raise ValueError("'method' must be 'mse' or 'mae'")
+    if method not in ['mse', 'mae', 'rmse']:
+        raise ValueError("'method' must be 'mse', 'rmse', or 'mae'")
     time_dim = 'sample' if 'sample' in da.dims else 'time'
     monthly_climo = da.groupby('%s.month' % time_dim).mean(time_dim)
     anomaly = da.sel(**{time_dim: val_set}).groupby('%s.month' % time_dim) - monthly_climo
@@ -114,6 +122,8 @@ def monthly_climo_error(da, val_set, n_fhour=None, method='mse', return_da=False
         me = float((anomaly ** 2.).mean().values)
     elif method == 'mae':
         me = float(anomaly.abs().mean().values)
+    elif method == 'rmse':
+        me = np.sqrt(float((anomaly ** 2.).mean().values))
     if n_fhour is not None:
         me = np.array([me] * n_fhour)
     if return_da:
