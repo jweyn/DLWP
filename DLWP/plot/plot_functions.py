@@ -260,9 +260,11 @@ def zonal_mean_plot(obs_mean, obs_std, pred_mean, pred_std, f_hour, model_name='
     fig = plt.figure()
     fig.set_size_inches(4, 6)
     plt.fill_betweenx(obs_mean.lat, obs_mean - obs_std, obs_mean + obs_std,
-                      facecolor='lightgray', zorder=-100)
-    plt.plot(obs_mean, obs_mean.lat, label='observed')
-    plt.plot(pred_mean, pred_mean.lat, label='%d-hour prediction' % f_hour)
+                      facecolor='C0', zorder=-50, alpha=0.3)
+    plt.fill_betweenx(pred_mean.lat, pred_mean - pred_std, pred_mean + pred_std,
+                      facecolor='C1', zorder=-40, alpha=0.3)
+    plt.plot(obs_mean, obs_mean.lat, label='observed', color='C0')
+    plt.plot(pred_mean, pred_mean.lat, label='%d-hour prediction' % f_hour, color='C1')
     plt.legend(loc='best')
     plt.grid(True, color='lightgray', zorder=-100)
     plt.plot(pred_mean - pred_std, pred_mean.lat, 'k:', linewidth=0.7)

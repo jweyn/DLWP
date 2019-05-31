@@ -230,10 +230,10 @@ for m, model in enumerate(models):
 
     # Plot the zonal climatology of the last forecast hour
     if plot_zonal:
-        obs_zonal_mean = validation_data.sel(**selection)[num_forecast_steps:].mean(axis=(0, -1))
-        obs_zonal_std = validation_data.sel(**selection)[num_forecast_steps:].std(axis=-1).mean(axis=0)
-        pred_zonal_mean = time_series[-1, :-num_forecast_steps].mean(axis=(0, -1))
-        pred_zonal_std = time_series[-1, :-num_forecast_steps].std(axis=-1).mean(axis=0)
+        obs_zonal_mean = verification[-1].mean(axis=(0, -1))
+        obs_zonal_std = verification[-1].std(axis=-1).mean(axis=0)
+        pred_zonal_mean = time_series[-1].mean(axis=(0, -1))
+        pred_zonal_std = time_series[-1].std(axis=-1).mean(axis=0)
         zonal_mean_plot(obs_zonal_mean, obs_zonal_std, pred_zonal_mean, pred_zonal_std, dt*num_forecast_steps,
                         model_labels[m], out_directory=plot_directory)
 

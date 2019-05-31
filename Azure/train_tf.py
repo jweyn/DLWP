@@ -394,11 +394,11 @@ if model_file is not None:
 
 # Evaluate the model
 print("\nTrain time -- %s seconds --" % (end_time - start_time))
-print('Train loss:', history.history['loss'][-patience - 1])
-run.log('TRAIN_LOSS', history.history['loss'][-patience - 1])
 try:
+    print('Train loss:', history.history['loss'][-patience - 1])
+    run.log('TRAIN_LOSS', history.history['loss'][-patience - 1])
     print('Train mean absolute error:', history.history['mean_absolute_error'][-patience - 1])
-except KeyError:
+except (KeyError, IndexError):
     pass
 if validation_data is not None:
     score = dlwp.evaluate(*val_generator.generate([]), verbose=0)

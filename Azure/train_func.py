@@ -26,6 +26,7 @@ from DLWP.custom import PeriodicPadding2D, RNNResetStates, EarlyStoppingMin, Run
     latitude_weighted_loss, RowConnected2D
 from keras.losses import mean_squared_error
 from keras.models import Model
+import tensorflow as tf
 
 
 #%% Parse user arguments
@@ -41,10 +42,16 @@ parser.add_argument('--log-directory', type=str, dest='log_directory', default='
                     help='Destination for log files in root-directory')
 parser.add_argument('--temp-dir', type=str, dest='temp_dir', default='None',
                     help='If specified, copies the predictor file here for use during training (e.g., fast SSD)')
+parser.add_argument('--seed', type=int, dest='seed', default=-1,
+                    help='Specify random number seed >= 0')
 
 args = parser.parse_args()
 if args.temp_dir != 'None':
     os.makedirs(args.temp_dir, exist_ok=True)
+
+if args.seed >= 0:
+    np.random.seed(args.seed)
+    tf.set_random_seed(args.seed)
 
 
 #%% Parameters
@@ -65,6 +72,8 @@ batch_size = 64
 lambda_ = 1.e-4
 weight_loss = False
 loss_by_step = None
+# loss_by_step = np.linspace(1., 0.2, 6)
+# loss_by_step = list(loss_by_step / np.sum(loss_by_step))
 shuffle = True
 skip_connections = False
 latitude_dependent = False
