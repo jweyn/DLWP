@@ -137,8 +137,7 @@ class EarlyStoppingMin(EarlyStopping):
 class PeriodicPadding2D(ZeroPadding2D):
     """Periodic-padding layer for 2D input (e.g. image).
 
-    This layer can add periodic rows and columns
-    at the top, bottom, left and right side of an image tensor.
+    This layer can add periodic rows and columns at the top, bottom, left and right side of an image tensor.
 
     Adapted from keras.layers.ZeroPadding2D by @jweyn
 
@@ -213,8 +212,101 @@ class PeriodicPadding2D(ZeroPadding2D):
         return outputs
 
 
+class AveragePadding2D(ZeroPadding2D):
+    """Average-padding layer for 2D input (e.g. image).
+
+    This layer can add rows or columns to the edges which contain uniform values equal to the mean value along
+    each edge.
+
+    Adapted from keras.layers.ZeroPadding2D by @jweyn
+
+    # Arguments
+        padding: int, or tuple of 2 ints, or tuple of 2 tuples of 2 ints.
+            - If int: the same symmetric padding
+                is applied to height and width.
+            - If tuple of 2 ints:
+                interpreted as two different
+                symmetric padding values for height and width:
+                `(symmetric_height_pad, symmetric_width_pad)`.
+            - If tuple of 2 tuples of 2 ints:
+                interpreted as
+                `((top_pad, bottom_pad), (left_pad, right_pad))`
+        data_format: A string,
+            one of `"channels_last"` or `"channels_first"`.
+            The ordering of the dimensions in the inputs.
+            `"channels_last"` corresponds to inputs with shape
+            `(batch, height, width, channels)` while `"channels_first"`
+            corresponds to inputs with shape
+            `(batch, channels, height, width)`.
+            It defaults to the `image_data_format` value found in your
+            Keras config file at `~/.keras/keras.json`.
+            If you never set it, then it will be "channels_last".
+
+    # Input shape
+        4D tensor with shape:
+        - If `data_format` is `"channels_last"`:
+            `(batch, rows, cols, channels)`
+        - If `data_format` is `"channels_first"`:
+            `(batch, channels, rows, cols)`
+
+    # Output shape
+        4D tensor with shape:
+        - If `data_format` is `"channels_last"`:
+            `(batch, padded_rows, padded_cols, channels)`
+        - If `data_format` is `"channels_first"`:
+            `(batch, channels, padded_rows, padded_cols)`
+    """
+
+    def __init__(self,
+                 padding=(1, 1),
+                 data_format=None,
+                 **kwargs):
+        super(AveragePadding2D, self).__init__(padding=padding,
+                                               data_format=data_format,
+                                               **kwargs)
+
+    def call(self, inputs):
+        if K.backend() == 'plaidml.keras.backend':
+            shape = inputs.shape.dims
+        else:
+            shape = inputs.shape
+        if self.data_format == 'channels_first':
+            top = K.zeros(shape[:2] + (self.padding[0][0], shape[-1]))
+            bottom = K.zeros(shape[:2] + (self.padding[0][1], shape[-1]))
+            left = K.zeros(shape[:3] + (self.padding[1][0],))
+            right = K.zeros(shape[:3] + (self.padding[1][1],))
+            # Insert mean value
+            top = K.update_add(top, K.mean(inputs[:, :, [0]]))
+            bottom = K.update_add(bottom, K.mean(inputs[:, :, [-1]]))
+            left = K.update_add(left, K.mean(inputs[:, :, :, [0]]))
+            right = K.update_add(right, K.mean(inputs[:, :, :, [-1]]))
+            # Pad the horizontal
+            outputs = K.concatenate([left, inputs, right], axis=3)
+            # Pad the vertical
+            outputs = K.concatenate([top, outputs, bottom], axis=2)
+        else:
+            top = K.zeros(shape[:1] + (self.padding[0][0],) + shape[-2:])
+            bottom = K.zeros(shape[:1] + (self.padding[0][1],) + shape[-2:])
+            left = K.zeros(shape[:2] + (self.padding[1][0], shape[-1]))
+            right = K.zeros(shape[:2] + (self.padding[1][1], shape[-1]))
+            # Insert mean value
+            top = K.update_add(top, K.mean(inputs[:, [0]]))
+            bottom = K.update_add(bottom, K.mean(inputs[:, [-1]]))
+            left = K.update_add(left, K.mean(inputs[:, :, [0]]))
+            right = K.update_add(right, K.mean(inputs[:, :, [-1]]))
+            # Pad the horizontal
+            outputs = K.concatenate([left, inputs, right], axis=2)
+            # Pad the vertical
+            outputs = K.concatenate([top, outputs, bottom], axis=1)
+        return outputs
+
+
 class PeriodicPadding3D(ZeroPadding3D):
-    """Zero-padding layer for 3D data (spatial or spatio-temporal).
+    """Periodic-padding layer for 3D input (e.g. image).
+
+    This layer can add periodic rows, columns, and depth to an image tensor.
+
+    Adapted from keras.layers.ZeroPadding3D by @jweyn
 
     # Arguments
         padding: int, or tuple of 3 ints, or tuple of 3 tuples of 2 ints.
@@ -298,6 +390,113 @@ class PeriodicPadding3D(ZeroPadding3D):
             outputs = K.concatenate([outputs[:, :, top_slice], outputs, outputs[:, :, bottom_slice]], axis=2)
             # Pad the depth
             outputs = K.concatenate([outputs[:, low_slice], outputs, outputs[:, high_slice]], axis=1)
+        return outputs
+
+
+class AveragePadding3D(ZeroPadding3D):
+    """Average-padding layer for 3D input (e.g. image).
+
+    This layer can add rows or columns to the edges which contain uniform values equal to the mean value along
+    each edge.
+
+    Adapted from keras.layers.ZeroPadding2D by @jweyn
+
+    # Arguments
+        padding: int, or tuple of 3 ints, or tuple of 3 tuples of 2 ints.
+            - If int: the same symmetric padding
+                is applied to height and width.
+            - If tuple of 3 ints:
+                interpreted as two different
+                symmetric padding values for height and width:
+                `(symmetric_dim1_pad, symmetric_dim2_pad, symmetric_dim3_pad)`.
+            - If tuple of 3 tuples of 2 ints:
+                interpreted as
+                `((left_dim1_pad, right_dim1_pad),
+                  (left_dim2_pad, right_dim2_pad),
+                  (left_dim3_pad, right_dim3_pad))`
+        data_format: A string,
+            one of `"channels_last"` or `"channels_first"`.
+            The ordering of the dimensions in the inputs.
+            `"channels_last"` corresponds to inputs with shape
+            `(batch, spatial_dim1, spatial_dim2, spatial_dim3, channels)`
+            while `"channels_first"` corresponds to inputs with shape
+            `(batch, channels, spatial_dim1, spatial_dim2, spatial_dim3)`.
+            It defaults to the `image_data_format` value found in your
+            Keras config file at `~/.keras/keras.json`.
+            If you never set it, then it will be "channels_last".
+
+    # Input shape
+        5D tensor with shape:
+        - If `data_format` is `"channels_last"`:
+            `(batch, first_axis_to_pad, second_axis_to_pad, third_axis_to_pad,
+              depth)`
+        - If `data_format` is `"channels_first"`:
+            `(batch, depth,
+              first_axis_to_pad, second_axis_to_pad, third_axis_to_pad)`
+
+    # Output shape
+        5D tensor with shape:
+        - If `data_format` is `"channels_last"`:
+            `(batch, first_padded_axis, second_padded_axis, third_axis_to_pad,
+              depth)`
+        - If `data_format` is `"channels_first"`:
+            `(batch, depth,
+              first_padded_axis, second_padded_axis, third_axis_to_pad)`
+    """
+
+    def __init__(self,
+                 padding=(1, 1),
+                 data_format=None,
+                 **kwargs):
+        super(AveragePadding3D, self).__init__(padding=padding,
+                                               data_format=data_format,
+                                               **kwargs)
+
+    def call(self, inputs):
+        if K.backend() == 'plaidml.keras.backend':
+            shape = inputs.shape.dims
+        else:
+            shape = inputs.shape
+        if self.data_format == 'channels_first':
+            low = K.zeros(shape[:2] + (self.padding[0][0],) + shape[-2:])
+            high = K.zeros(shape[:2] + (self.padding[0][1],) + shape[-2:])
+            top = K.zeros(shape[:3] + (self.padding[1][0], shape[-1]))
+            bottom = K.zeros(shape[:3] + (self.padding[1][1], shape[-1]))
+            left = K.zeros(shape[:4] + (self.padding[2][0],))
+            right = K.zeros(shape[:4] + (self.padding[2][1],))
+            # Insert mean value
+            low = K.update_add(low, K.mean(inputs[:, :, [0]]))
+            high = K.update_add(high, K.mean(inputs[:, :, [-1]]))
+            top = K.update_add(top, K.mean(inputs[:, :, :, [0]]))
+            bottom = K.update_add(bottom, K.mean(inputs[:, :, :, [-1]]))
+            left = K.update_add(left, K.mean(inputs[:, :, :, :, [0]]))
+            right = K.update_add(right, K.mean(inputs[:, :, :, :, [-1]]))
+            # Pad the horizontal
+            outputs = K.concatenate([left, inputs, right], axis=4)
+            # Pad the vertical
+            outputs = K.concatenate([top, outputs, bottom], axis=3)
+            # Pad the depth
+            outputs = K.concatenate([low, outputs, high], axis=2)
+        else:
+            low = K.zeros(shape[:1] + (self.padding[0][0],) + shape[-3:])
+            high = K.zeros(shape[:1] + (self.padding[0][1],) + shape[-3:])
+            top = K.zeros(shape[:2] + (self.padding[1][0],) + shape[-2:])
+            bottom = K.zeros(shape[:2] + (self.padding[1][1],) + shape[-2:])
+            left = K.zeros(shape[:3] + (self.padding[2][0], shape[-1]))
+            right = K.zeros(shape[:3] + (self.padding[2][1], shape[-1]))
+            # Insert mean value
+            low = K.update_add(low, K.mean(inputs[:, [0]]))
+            high = K.update_add(high, K.mean(inputs[:, [-1]]))
+            top = K.update_add(top, K.mean(inputs[:, :, [0]]))
+            bottom = K.update_add(bottom, K.mean(inputs[:, :, [-1]]))
+            left = K.update_add(left, K.mean(inputs[:, :, :, [0]]))
+            right = K.update_add(right, K.mean(inputs[:, :, :, [-1]]))
+            # Pad the horizontal
+            outputs = K.concatenate([left, inputs, right], axis=3)
+            # Pad the vertical
+            outputs = K.concatenate([top, outputs, bottom], axis=2)
+            # Pad the depth
+            outputs = K.concatenate([low, outputs, high], axis=1)
         return outputs
 
 
