@@ -212,11 +212,10 @@ class PeriodicPadding2D(ZeroPadding2D):
         return outputs
 
 
-class AveragePadding2D(ZeroPadding2D):
-    """Average-padding layer for 2D input (e.g. image).
+class FillPadding2D(ZeroPadding2D):
+    """Fill-padding layer for 2D input (e.g. image).
 
-    This layer can add rows or columns to the edges which contain uniform values equal to the mean value along
-    each edge.
+    This layer can add rows or columns that duplicate the edge values.
 
     Adapted from keras.layers.ZeroPadding2D by @jweyn
 
@@ -261,43 +260,51 @@ class AveragePadding2D(ZeroPadding2D):
                  padding=(1, 1),
                  data_format=None,
                  **kwargs):
-        super(AveragePadding2D, self).__init__(padding=padding,
-                                               data_format=data_format,
-                                               **kwargs)
+        super(FillPadding2D, self).__init__(padding=padding, data_format=data_format, **kwargs)
 
     def call(self, inputs):
-        if K.backend() == 'plaidml.keras.backend':
-            shape = inputs.shape.dims
-        else:
-            shape = inputs.shape
         if self.data_format == 'channels_first':
-            top = K.zeros(shape[:2] + (self.padding[0][0], shape[-1]))
-            bottom = K.zeros(shape[:2] + (self.padding[0][1], shape[-1]))
-            left = K.zeros(shape[:3] + (self.padding[1][0],))
-            right = K.zeros(shape[:3] + (self.padding[1][1],))
-            # Insert mean value
-            top = K.update_add(top, K.mean(inputs[:, :, [0]]))
-            bottom = K.update_add(bottom, K.mean(inputs[:, :, [-1]]))
-            left = K.update_add(left, K.mean(inputs[:, :, :, [0]]))
-            right = K.update_add(right, K.mean(inputs[:, :, :, [-1]]))
-            # Pad the horizontal
-            outputs = K.concatenate([left, inputs, right], axis=3)
             # Pad the vertical
-            outputs = K.concatenate([top, outputs, bottom], axis=2)
+            if self.padding[0][0] > 0:
+                top_slice = K.stack([inputs[:, :, 0]] * self.padding[0][0], axis=2)
+            else:
+                top_slice = inputs[:, :, slice(0, 0)]
+            if self.padding[0][1] > 0:
+                bottom_slice = K.stack([inputs[:, :, -1]] * self.padding[0][1], axis=2)
+            else:
+                bottom_slice = inputs[:, :, slice(0, 0)]
+            outputs = K.concatenate([top_slice, inputs, bottom_slice], axis=2)
+            # Pad the horizontal
+            if self.padding[1][0] > 0:
+                left_slice = K.stack([outputs[:, :, :, 0]] * self.padding[1][0], axis=3)
+            else:
+                left_slice = outputs[:, :, :, slice(0, 0)]
+            if self.padding[1][1] > 0:
+                right_slice = K.stack([outputs[:, :, :, -1]] * self.padding[1][1], axis=3)
+            else:
+                right_slice = outputs[:, :, :, slice(0, 0)]
+            outputs = K.concatenate([left_slice, outputs, right_slice], axis=3)
         else:
-            top = K.zeros(shape[:1] + (self.padding[0][0],) + shape[-2:])
-            bottom = K.zeros(shape[:1] + (self.padding[0][1],) + shape[-2:])
-            left = K.zeros(shape[:2] + (self.padding[1][0], shape[-1]))
-            right = K.zeros(shape[:2] + (self.padding[1][1], shape[-1]))
-            # Insert mean value
-            top = K.update_add(top, K.mean(inputs[:, [0]]))
-            bottom = K.update_add(bottom, K.mean(inputs[:, [-1]]))
-            left = K.update_add(left, K.mean(inputs[:, :, [0]]))
-            right = K.update_add(right, K.mean(inputs[:, :, [-1]]))
-            # Pad the horizontal
-            outputs = K.concatenate([left, inputs, right], axis=2)
             # Pad the vertical
-            outputs = K.concatenate([top, outputs, bottom], axis=1)
+            if self.padding[0][0] > 0:
+                top_slice = K.stack([inputs[:, 0]] * self.padding[0][0], axis=1)
+            else:
+                top_slice = inputs[:, slice(0, 0)]
+            if self.padding[0][1] > 0:
+                bottom_slice = K.stack([inputs[:, -1]] * self.padding[0][1], axis=1)
+            else:
+                bottom_slice = inputs[:, slice(0, 0)]
+            outputs = K.concatenate([top_slice, inputs, bottom_slice], axis=1)
+            # Pad the horizontal
+            if self.padding[1][0] > 0:
+                left_slice = K.stack([outputs[:, :, 0]] * self.padding[1][0], axis=2)
+            else:
+                left_slice = outputs[:, :, slice(0, 0)]
+            if self.padding[1][1] > 0:
+                right_slice = K.stack([outputs[:, :, -1]] * self.padding[1][1], axis=2)
+            else:
+                right_slice = outputs[:, :, slice(0, 0)]
+            outputs = K.concatenate([left_slice, outputs, right_slice], axis=2)
         return outputs
 
 
@@ -393,13 +400,12 @@ class PeriodicPadding3D(ZeroPadding3D):
         return outputs
 
 
-class AveragePadding3D(ZeroPadding3D):
-    """Average-padding layer for 3D input (e.g. image).
+class FillPadding3D(ZeroPadding3D):
+    """Fill-padding layer for 3D input (e.g. image).
 
-    This layer can add rows or columns to the edges which contain uniform values equal to the mean value along
-    each edge.
+    This layer can add rows or columns that duplicate the edge values.
 
-    Adapted from keras.layers.ZeroPadding2D by @jweyn
+    Adapted from keras.layers.ZeroPadding3D by @jweyn
 
     # Arguments
         padding: int, or tuple of 3 ints, or tuple of 3 tuples of 2 ints.
@@ -448,55 +454,71 @@ class AveragePadding3D(ZeroPadding3D):
                  padding=(1, 1),
                  data_format=None,
                  **kwargs):
-        super(AveragePadding3D, self).__init__(padding=padding,
-                                               data_format=data_format,
-                                               **kwargs)
+        super(FillPadding3D, self).__init__(padding=padding, data_format=data_format, **kwargs)
 
     def call(self, inputs):
-        if K.backend() == 'plaidml.keras.backend':
-            shape = inputs.shape.dims
-        else:
-            shape = inputs.shape
         if self.data_format == 'channels_first':
-            low = K.zeros(shape[:2] + (self.padding[0][0],) + shape[-2:])
-            high = K.zeros(shape[:2] + (self.padding[0][1],) + shape[-2:])
-            top = K.zeros(shape[:3] + (self.padding[1][0], shape[-1]))
-            bottom = K.zeros(shape[:3] + (self.padding[1][1], shape[-1]))
-            left = K.zeros(shape[:4] + (self.padding[2][0],))
-            right = K.zeros(shape[:4] + (self.padding[2][1],))
-            # Insert mean value
-            low = K.update_add(low, K.mean(inputs[:, :, [0]]))
-            high = K.update_add(high, K.mean(inputs[:, :, [-1]]))
-            top = K.update_add(top, K.mean(inputs[:, :, :, [0]]))
-            bottom = K.update_add(bottom, K.mean(inputs[:, :, :, [-1]]))
-            left = K.update_add(left, K.mean(inputs[:, :, :, :, [0]]))
-            right = K.update_add(right, K.mean(inputs[:, :, :, :, [-1]]))
-            # Pad the horizontal
-            outputs = K.concatenate([left, inputs, right], axis=4)
-            # Pad the vertical
-            outputs = K.concatenate([top, outputs, bottom], axis=3)
             # Pad the depth
-            outputs = K.concatenate([low, outputs, high], axis=2)
+            if self.padding[0][0] > 0:
+                low_slice = K.stack([inputs[:, :, 0]] * self.padding[0][0], axis=2)
+            else:
+                low_slice = inputs[:, :, slice(0, 0)]
+            if self.padding[0][1] > 0:
+                high_slice = K.stack([inputs[:, :, -1]] * self.padding[0][1], axis=2)
+            else:
+                high_slice = inputs[:, :, slice(0, 0)]
+            outputs = K.concatenate([low_slice, inputs, high_slice], axis=2)
+            # Pad the vertical
+            if self.padding[1][0] > 0:
+                top_slice = K.stack([outputs[:, :, :, 0]] * self.padding[1][0], axis=3)
+            else:
+                top_slice = outputs[:, :, :, slice(0, 0)]
+            if self.padding[1][1] > 0:
+                bottom_slice = K.stack([outputs[:, :, :, -1]] * self.padding[1][1], axis=3)
+            else:
+                bottom_slice = outputs[:, :, :, slice(0, 0)]
+            outputs = K.concatenate([top_slice, outputs, bottom_slice], axis=3)
+            # Pad the horizontal
+            if self.padding[2][0] > 0:
+                left_slice = K.stack([outputs[:, :, :, :, 0]] * self.padding[2][0], axis=4)
+            else:
+                left_slice = outputs[:, :, :, :, slice(0, 0)]
+            if self.padding[2][1] > 0:
+                right_slice = K.stack([outputs[:, :, :, :, -1]] * self.padding[2][1], axis=4)
+            else:
+                right_slice = outputs[:, :, :, :, slice(0, 0)]
+            outputs = K.concatenate([left_slice, outputs, right_slice], axis=4)
         else:
-            low = K.zeros(shape[:1] + (self.padding[0][0],) + shape[-3:])
-            high = K.zeros(shape[:1] + (self.padding[0][1],) + shape[-3:])
-            top = K.zeros(shape[:2] + (self.padding[1][0],) + shape[-2:])
-            bottom = K.zeros(shape[:2] + (self.padding[1][1],) + shape[-2:])
-            left = K.zeros(shape[:3] + (self.padding[2][0], shape[-1]))
-            right = K.zeros(shape[:3] + (self.padding[2][1], shape[-1]))
-            # Insert mean value
-            low = K.update_add(low, K.mean(inputs[:, [0]]))
-            high = K.update_add(high, K.mean(inputs[:, [-1]]))
-            top = K.update_add(top, K.mean(inputs[:, :, [0]]))
-            bottom = K.update_add(bottom, K.mean(inputs[:, :, [-1]]))
-            left = K.update_add(left, K.mean(inputs[:, :, :, [0]]))
-            right = K.update_add(right, K.mean(inputs[:, :, :, [-1]]))
-            # Pad the horizontal
-            outputs = K.concatenate([left, inputs, right], axis=3)
-            # Pad the vertical
-            outputs = K.concatenate([top, outputs, bottom], axis=2)
             # Pad the depth
-            outputs = K.concatenate([low, outputs, high], axis=1)
+            if self.padding[0][0] > 0:
+                low_slice = K.stack([inputs[:, 0]] * self.padding[0][0], axis=1)
+            else:
+                low_slice = inputs[:, slice(0, 0)]
+            if self.padding[0][1] > 0:
+                high_slice = K.stack([inputs[:, -1]] * self.padding[0][1], axis=1)
+            else:
+                high_slice = inputs[:, slice(0, 0)]
+            outputs = K.concatenate([low_slice, inputs, high_slice], axis=1)
+            # Pad the vertical
+            if self.padding[1][0] > 0:
+                top_slice = K.stack([outputs[:, :, 0]] * self.padding[1][0], axis=2)
+            else:
+                top_slice = outputs[:, :, slice(0, 0)]
+            if self.padding[1][1] > 0:
+                bottom_slice = K.stack([outputs[:, :, -1]] * self.padding[1][1], axis=2)
+            else:
+                bottom_slice = outputs[:, :, slice(0, 0)]
+            outputs = K.concatenate([top_slice, outputs, bottom_slice], axis=2)
+            # Pad the horizontal
+            if self.padding[2][0] > 0:
+                left_slice = K.stack([outputs[:, :, :, 0]] * self.padding[2][0], axis=3)
+            else:
+                left_slice = outputs[:, :, :, slice(0, 0)]
+            if self.padding[2][1] > 0:
+                right_slice = K.stack([outputs[:, :, :, -1]] * self.padding[2][1], axis=3)
+            else:
+                right_slice = outputs[:, :, :, slice(0, 0)]
+            outputs = K.concatenate([left_slice, outputs, right_slice], axis=3)
         return outputs
 
 
