@@ -13,6 +13,7 @@ from keras.losses import mean_squared_error
 import numpy as np
 import pandas as pd
 import xarray as xr
+import pickle
 from datetime import datetime, timedelta
 import matplotlib
 matplotlib.use('agg')
@@ -34,14 +35,14 @@ predictor_file = '%s/cfs_6h_1979-2010_z500-th3-7-w700-rh850-pwat_NH_T2.nc' % roo
 
 # Names of model files, located in the root_directory, and labels for those models
 models = [
-    'dlwp_6h_tau-lstm16_z-tau-out',
-    'dlwp_6h_tau-lstm16_z-out',
-    'dlwp_6h_tau-sol-lstm16_z-out'
+    '/dlwp_1979-2010_hgt-thick_300-500-700_NH_T2F_FINAL-lstm',
+    'dlwp_6h_tau-lstm_z-tau-out_fillpad',
+    'dlwp_6h_tau-lstm_z-tau-out_avgpool'
 ]
 model_labels = [
-    r'$\tau$ LSTM16',
-    r'$\tau$ LSTM16 $Z$ out',
-    r'$\tau$+SOL LSTM16 $Z$ out'
+    r'$\tau$ LSTM',
+    r'$\tau$ LSTM fill',
+    r'$\tau$ LSTM avg pool',
 ]
 
 # Optional list of selections to make from the predictor dataset for each model. This is useful if, for example,
@@ -55,12 +56,12 @@ input_selection = [
 ]
 output_selection = [
     {'varlev': ['HGT/500', 'THICK/300-700']},
-    {'varlev': ['HGT/500']},
-    {'varlev': ['HGT/500']},
+    {'varlev': ['HGT/500', 'THICK/300-700']},
+    {'varlev': ['HGT/500', 'THICK/300-700']},
 ]
-add_insolation = [False, False, True]
-input_time_steps = [2] * len(models)
-output_time_steps = [2] * len(models)
+add_insolation = [False] * len(models)
+input_time_steps = [2, ] * len(models)
+output_time_steps = [2, ] * len(models)
 
 # Models which use up-sampling need to have an even number of latitudes. This is usually done by cropping out the
 # north pole. Set this option to do that.
@@ -87,7 +88,7 @@ baro_ds = xr.open_dataset(baro_model_file)
 baro_ds = baro_ds.isel(lat=(baro_ds.lat >= 0.0))  # Northern hemisphere only
 
 # Number of forward integration weather forecast time steps
-num_forecast_steps = 24
+num_forecast_hours = 72
 dt = 6
 
 # Latitude bounds for MSE calculation
@@ -100,6 +101,9 @@ selection = {
     'varlev': 'HGT/500'
 }
 
+# Scale the variables to original units
+scale_variables = True
+
 # Do specific plots
 plot_directory = './Plots'
 plot_example = None  # None to disable or the date index of the sample
@@ -107,8 +111,12 @@ plot_example_f_hour = 24  # Forecast hour index of the sample
 plot_history = False
 plot_zonal = False
 plot_mse = True
-mse_title = r'$\hat{Z}_{500}$; 2007JFM; 20-70$^{\circ}$N'
-mse_file_name = 'mse_tau-lstm16_20-70.pdf'
+plot_spread = False
+plot_mean = False
+method = 'rmse'
+mse_title = r'$Z_{500}$; 2003-2006; 20-70$^{\circ}$N'
+mse_file_name = 'rmse_tau-lstm_avg-fill.pdf'
+mse_pkl_file = 'rmse_tau-lstm_avg-fill.pkl'
 
 
 #%% Pre-processing
@@ -138,13 +146,19 @@ selection = selection or {}
 mse = []
 f_hours = []
 
+# Scaling parameters
+sel_mean = data.sel(**selection).variables['mean'].values
+sel_std = data.sel(**selection).variables['std'].values
+
 # Generate verification
 print('Generating verification...')
+num_forecast_steps = num_forecast_hours // dt
 validation_data.load()
 verification = verify.verification_from_samples(validation_data.sel(**selection),
                                                 forecast_steps=num_forecast_steps, dt=dt)
 verification = verification.sel(lat=((verification.lat >= lat_min) & (verification.lat <= lat_max)))
-
+if scale_variables:
+    verification = verification * sel_std + sel_mean
 
 #%% Iterate through the models and calculate their stats
 
@@ -163,7 +177,7 @@ for m, model in enumerate(models):
         customs = None
 
     # Load the model
-    dlwp, history = load_model('%s/%s' % (root_directory, model), True, custom_objects=customs)
+    dlwp, history = load_model('%s/%s' % (root_directory, model), True, custom_objects=customs, gpus=1)
 
     # Assign forecast hour coordinate
     if isinstance(dlwp, DLWPFunctional):
@@ -208,11 +222,15 @@ for m, model in enumerate(models):
 
     # Slice the arrays as we want
     time_series = time_series.sel(**selection, lat=((time_series.lat >= lat_min) & (time_series.lat <= lat_max)))
+    if scale_variables:
+        time_series = time_series * sel_std + sel_mean
 
     # Calculate the MSE for each forecast hour relative to observations
-    mse.append(verify.forecast_error(time_series.values,
+    intersection = np.intersect1d(time_series.time.values, verification.time.values, assume_unique=True)
+    mse.append(verify.forecast_error(time_series.sel(time=intersection).values,
                                      verification.isel(f_hour=slice(0, len(time_series.f_hour)))
-                                     .sel(sample=time_series.time).values))
+                                     .sel(time=intersection).values,
+                                     method=method))
 
     # Plot learning curves
     if plot_history:
@@ -261,11 +279,11 @@ if baro_ds is not None and plot_mse:
     baro_f = baro_forecast.variables['Z'].values
 
     # Normalize by the same std and mean as the predictor dataset
-    z500_mean = data.sel(**selection).variables['mean'].values
-    z500_std = data.sel(**selection).variables['std'].values
-    baro_f = (baro_f - z500_mean) / z500_std
+    if not scale_variables:
+        baro_f = (baro_f - sel_mean) / sel_std
 
-    mse.append(verify.forecast_error(baro_f[:baro_forecast_steps], verification.values[:baro_forecast_steps]))
+    mse.append(verify.forecast_error(baro_f[:baro_forecast_steps], verification.values[:baro_forecast_steps],
+                                     method=method))
     model_labels.append('Barotropic')
     f_hours.append(np.arange(dt, baro_forecast_steps * dt + 1., dt))
     baro_f, baro_v = None, None
@@ -289,11 +307,11 @@ if cfs_ds is not None and plot_mse:
     cfs_f = cfs_forecast.variables['z500'].values
 
     # Normalize by the same std and mean as the predictor dataset
-    z500_mean = data.sel(**selection).variables['mean'].values
-    z500_std = data.sel(**selection).variables['std'].values
-    cfs_f = (cfs_f - z500_mean) / z500_std
+    if not scale_variables:
+        cfs_f = (cfs_f - sel_mean) / sel_std
 
-    mse.append(verify.forecast_error(cfs_f[:cfs_forecast_steps], verification.values[:cfs_forecast_steps]))
+    mse.append(verify.forecast_error(cfs_f[:cfs_forecast_steps], verification.values[:cfs_forecast_steps],
+                                     method=method))
     model_labels.append('CFS')
     f_hours.append(np.arange(dt, cfs_forecast_steps * dt + 1., dt))
     cfs_f, cfs_v = None, None
@@ -305,17 +323,20 @@ if plot_mse:
     print('Calculating persistence forecasts...')
     init = validation_data.predictors.sel(**selection,
                                           lat=((validation_data.lat >= lat_min) & (validation_data.lat <= lat_max)))
+    if scale_variables:
+        init = init * sel_std + sel_mean
     if 'time_step' in init.dims:
         init = init.isel(time_step=-1)
     mse.append(verify.forecast_error(np.repeat(init.values[None, ...], num_forecast_steps, axis=0),
-                                     verification.values))
+                                     verification.values, method=method))
     model_labels.append('Persistence')
     f_hours.append(np.arange(dt, num_forecast_steps * dt + 1., dt))
 
     print('Calculating climatology forecasts...')
-    mse.append(verify.monthly_climo_error(data['predictors'].sel(
-        **selection, lat=((data.lat >= lat_min) & (data.lat <= lat_max))),
-        validation_set, n_fhour=num_forecast_steps))
+    climo_data = data['predictors'].sel(**selection, lat=((data.lat >= lat_min) & (data.lat <= lat_max)))
+    if scale_variables:
+        climo_data = climo_data * sel_std + sel_mean
+    mse.append(verify.monthly_climo_error(climo_data, validation_set, n_fhour=num_forecast_steps, method=method))
     model_labels.append('Climatology')
     f_hours.append(np.arange(dt, num_forecast_steps * dt + 1., dt))
 
@@ -323,20 +344,56 @@ if plot_mse:
 #%% Plot the combined MSE as a function of forecast hour for all models
 
 if plot_mse:
-    fig = plt.figure()
-    fig.set_size_inches(6, 4)
-    for m, model in enumerate(model_labels):
-        plt.plot(f_hours[m], mse[m], label=model, linewidth=2.)
-    plt.xlim([0, dt * num_forecast_steps])
-    plt.xticks(np.arange(0, num_forecast_steps * dt + 1, 2 * dt))
-    plt.ylim([0, 0.2])
-    plt.yticks(np.arange(0, 0.25, 0.05))
-    plt.legend(loc='best')
-    plt.grid(True, color='lightgray', zorder=-100)
-    plt.xlabel('forecast hour')
-    plt.ylabel('MSE')
-    plt.title(mse_title)
-    plt.savefig('%s/%s' % (plot_directory, mse_file_name), bbox_inches='tight')
-    plt.show()
+    if plot_spread:
+        fig = plt.figure()
+        fig.set_size_inches(6, 4)
+        for m, model in enumerate(model_labels):
+            if model in ['Barotropic', 'CFS', 'Persistence', 'Climatology']:
+                plt.plot(f_hours[m], mse[m], label=model, linewidth=2.)
+        mean = np.mean(np.array(mse[:len(models)]), axis=0)
+        plt.plot(f_hours[0], mean, 'k-', label=r'DLWP mean', linewidth=1.)
+        std = np.std(np.array(mse[:len(models)]), axis=0)
+        plt.fill_between(f_hours[0], mean - std, mean + std,
+                         facecolor=(0.5, 0.5, 0.5, 0.5), zorder=-50)
+        plt.xlim([0, np.max(np.array(f_hours))])
+        plt.xticks(np.arange(0, np.max(np.array(f_hours)) + 1, 2 * dt))
+        plt.ylim([0, 140])
+        plt.yticks(np.arange(0, 141, 20))
+        plt.legend(loc='best', fontsize=8)
+        plt.grid(True, color='lightgray', zorder=-100)
+        plt.xlabel('forecast hour')
+        plt.ylabel(method.upper())
+        plt.title(mse_title)
+        plt.savefig('%s/%s' % (plot_directory, mse_file_name), bbox_inches='tight')
+        plt.show()
+    else:
+        fig = plt.figure()
+        fig.set_size_inches(6, 4)
+        for m, model in enumerate(model_labels):
+            if model in ['Barotropic', 'CFS', 'Persistence', 'Climatology']:
+                plt.plot(f_hours[m], mse[m], label=model, linewidth=2.)
+            else:
+                if plot_mean:
+                    plt.plot(f_hours[m], mse[m], label=model, linewidth=1., linestyle='--' if m < 10 else ':')
+                else:
+                    plt.plot(f_hours[m], mse[m], label=model, linewidth=2.)
+        if plot_mean:
+            plt.plot(f_hours[0], np.mean(np.array(mse[:len(models)]), axis=0), label='mean', linewidth=2.)
+        plt.xlim([0, dt * num_forecast_steps])
+        plt.xticks(np.arange(0, num_forecast_steps * dt + 1, 2 * dt))
+        plt.ylim([0, 140])
+        plt.yticks(np.arange(0, 141, 20))
+        plt.legend(loc='best', fontsize=8)
+        plt.grid(True, color='lightgray', zorder=-100)
+        plt.xlabel('forecast hour')
+        plt.ylabel(method.upper())
+        plt.title(mse_title)
+        plt.savefig('%s/%s' % (plot_directory, mse_file_name), bbox_inches='tight')
+        plt.show()
+
+if mse_pkl_file is not None:
+    result = {'f_hours': f_hours, 'models': models, 'model_labels': model_labels, 'mse': mse}
+    with open('%s/%s' % (plot_directory, mse_pkl_file), 'wb') as f:
+        pickle.dump(result, f)
 
 print('Done writing figures to %s' % plot_directory)

@@ -327,15 +327,17 @@ end_time = time.time()
 
 # Save the model
 if model_file is not None:
+    os.makedirs(os.path.sep.join(model_file.split(os.path.sep)[:-1]), exist_ok=True)
     save_model(dlwp, model_file, history=history)
+    print('Wrote model %s' % model_file)
 
 # Evaluate the model
 print("\nTrain time -- %s seconds --" % (end_time - start_time))
-print('Train loss:', history.history['loss'][-patience - 1])
-run.log('TRAIN_LOSS', history.history['loss'][-patience - 1])
 try:
+    print('Train loss:', history.history['loss'][-patience - 1])
+    run.log('TRAIN_LOSS', history.history['loss'][-patience - 1])
     print('Train mean absolute error:', history.history['mean_absolute_error'][-patience - 1])
-except KeyError:
+except (KeyError, IndexError):
     pass
 if validation_data is not None:
     score = dlwp.evaluate(*val_generator.generate([]), verbose=0)
