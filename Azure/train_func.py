@@ -21,9 +21,12 @@ from DLWP.util import save_model, train_test_split_ind
 from keras.callbacks import TensorBoard
 from azureml.core import Run
 
-from keras.layers import Input, ZeroPadding2D, Conv2D, MaxPooling2D, UpSampling2D, concatenate
-from DLWP.custom import PeriodicPadding2D, RNNResetStates, EarlyStoppingMin, RunHistory, slice_layer, \
+from keras.layers import Input, ZeroPadding2D, ZeroPadding3D, Conv2D, ConvLSTM2D, MaxPooling2D, UpSampling2D, \
+    Reshape, concatenate
+from DLWP.custom import PeriodicPadding2D, PeriodicPadding3D, RNNResetStates, EarlyStoppingMin, slice_layer, \
     latitude_weighted_loss, RowConnected2D
+
+from keras.regularizers import l2
 from keras.losses import mean_squared_error
 from keras.models import Model
 import tensorflow as tf
@@ -239,9 +242,31 @@ split_1_1 = slice_layer(0, 16, axis=1)
 split_1_2 = slice_layer(16, 32, axis=1)
 split_2_1 = slice_layer(0, 32, axis=1)
 split_2_2 = slice_layer(32, 64, axis=1)
+if model_is_recurrent:
+    periodic_padding_3d_2 = PeriodicPadding3D(padding=(0, 0, 2), data_format='channels_first')
+    zero_padding_3d_2 = ZeroPadding3D(padding=(0, 2, 0), data_format='channels_first')
+    conv_lstm_2d_1 = ConvLSTM2D(4 * cs[1], 3, **{
+        'dilation_rate': 2,
+        'padding': 'valid',
+        'activation': 'tanh',
+        'data_format': 'channels_first',
+        'return_sequences': True,
+        'kernel_regularizer': l2(lambda_)
+    })
+    reshape_1 = Reshape((4 * cs[0] * cs[1], cs[2], cs[3]))
+    reshape_2 = Reshape(cso)
+    conv_2d_6 = Conv2D(cso[0] * cso[1], 5, **{
+        'padding': 'valid',
+        'activation': 'linear',
+        'data_format': 'channels_first'
+    })
 
 
 def basic_model(x):
+    if model_is_recurrent:
+        x = periodic_padding_3d_2(zero_padding_3d_2(x))
+        x = conv_lstm_2d_1(x)
+        x = reshape_1(x)
     x = periodic_padding_2(zero_padding_2(x))
     x = conv_2d_1(x)
     x = max_pooling_2(x)
@@ -258,10 +283,16 @@ def basic_model(x):
     x = conv_2d_5(x)
     x = periodic_padding_2(zero_padding_2(x))
     x = conv_2d_6(x)
+    if model_is_recurrent:
+        x = reshape_2(x)
     return x
 
 
 def skip_model(x):
+    if model_is_recurrent:
+        x = periodic_padding_3d_2(zero_padding_3d_2(x))
+        x = conv_lstm_2d_1(x)
+        x = reshape_1(x)
     x = periodic_padding_2(zero_padding_2(x))
     x = conv_2d_1(x)
     x, x1 = split_1_1(x), split_1_2(x)
@@ -282,6 +313,8 @@ def skip_model(x):
     x = concatenate([x, x1], axis=1)
     x = periodic_padding_2(zero_padding_2(x))
     x = conv_2d_6(x)
+    if model_is_recurrent:
+        x = reshape_2(x)
     return x
 
 

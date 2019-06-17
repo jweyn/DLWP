@@ -180,14 +180,6 @@ for m, model in enumerate(models):
     dlwp, history = load_model('%s/%s' % (root_directory, model), True, custom_objects=customs, gpus=1)
 
     # Assign forecast hour coordinate
-    if isinstance(dlwp, DLWPFunctional):
-        if not hasattr(dlwp, '_n_steps'):
-            dlwp._n_steps = 6
-        if not hasattr(dlwp, 'time_dim'):
-            dlwp.time_dim = 2
-        sequence = dlwp._n_steps
-    else:
-        sequence = None
     f_hours.append(np.arange(dt, num_forecast_steps * dt + 1., dt))
 
     # Build in some tolerance for old models trained with former APIs missing the is_convolutional and is_recurrent
@@ -202,6 +194,11 @@ for m, model in enumerate(models):
         for layer in dlwp.model.layers:
             if 'CONV' in layer.name.upper():
                 dlwp.is_convolutional = True
+    if isinstance(dlwp, DLWPFunctional):
+        if not hasattr(dlwp, '_n_steps'):
+            dlwp._n_steps = 6
+        if not hasattr(dlwp, 'time_dim'):
+            dlwp.time_dim = 2
 
     # Create data generator
     val_generator = SeriesDataGenerator(dlwp, validation_data, add_insolation=add_insolation[m],

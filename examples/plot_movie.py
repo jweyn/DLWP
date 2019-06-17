@@ -274,8 +274,10 @@ for date in plot_dates:
         file_name_complete = '%s/%s_%s_f%03d.%s' % (plot_directory, plot_file_name,
                                                     datetime.strftime(date, '%Y%m%d%H'), step + 1, plot_file_type)
 
-        make_plot(basemap, plot_time, scale_factor * verification.sel(time=date64, f_hour=f_hour),
+        make_plot(basemap, plot_time, scale_factor * verification.sel(time=date64, f_hour=np.timedelta64(f_hour, 'h')),
                   forecast=scale_factor * forecast.sel(time=date64, f_hour=np.timedelta64(f_hour, 'h')),
-                  fill=None if not plot_laplace else (verification_lap.sel(time=date64, f_hour=f_hour),
-                                                      forecast_lap.sel(time=date64, f_hour=np.timedelta64(f_hour, 'h'))),
+                  fill=None if not plot_laplace else (verification_lap.sel(time=date64,
+                                                                           f_hour=np.timedelta64(f_hour, 'h')),
+                                                      forecast_lap.sel(time=date64,
+                                                                       f_hour=np.timedelta64(f_hour, 'h'))),
                   file_name=file_name_complete)

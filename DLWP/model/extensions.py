@@ -38,10 +38,7 @@ class TimeSeriesEstimator(object):
             raise TypeError("'generator' must be a valid instance of a DLWP generator class")
         if isinstance(model, DLWPFunctional):
             warnings.warn('DLWPFunctional models are only partially supported by TimeSeriesEstimator. The '
-                          'inputs/outputs to the model must be the same.')
-            if hasattr(generator, '_output_time_steps') and model.time_dim != generator._output_time_steps:
-                raise ValueError('the expected model time_dim (%d) and generator output_time_steps (%d) do not match' %
-                                 (model.time_dim, generator._output_time_steps))
+                          'inputs/outputs to the model must be the same if the model predicts a sequence.')
         self.model = model
         self.generator = generator
         self._add_insolation = generator._add_insolation if hasattr(generator, '_add_insolation') else False
@@ -194,7 +191,11 @@ class TimeSeriesEstimator(object):
             t_shape = t.shape
         result = np.full((effective_steps,) + t_shape, np.nan, dtype=np.float32)
 
-        if isinstance(self.model, DLWPFunctional):
+        # A DLWPFunctional model which does not have the same inputs/outputs must have some programmatic way of fixing
+        # this issue built-in (if it is trained to minimize several iterations of the model). Thus we fall back to the
+        # regular predict_timeseries method. However, such a model that does not predict a sequence is perfectly valid
+        # for use here.
+        if isinstance(self.model, DLWPFunctional) and self.model._n_steps > 1:
             # For the DLWPFunctional model, just use its predict_timeseries API, which handles effective steps
             result[:] = self.model.predict_timeseries(p_da.values.reshape(p_shape), steps, keep_time_dim=True,
                                                       **kwargs).reshape((-1,) + t_shape)[:effective_steps, ...]
