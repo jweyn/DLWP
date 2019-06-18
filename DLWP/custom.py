@@ -16,6 +16,7 @@ from keras.layers import Lambda, Layer
 from keras.utils import conv_utils
 from keras.engine.base_layer import InputSpec
 import numpy as np
+import tensorflow as tf
 
 try:
     from s2cnn import S2Convolution, SO3Convolution
@@ -212,6 +213,98 @@ class PeriodicPadding2D(ZeroPadding2D):
         return outputs
 
 
+class PeriodicPadding3D(ZeroPadding3D):
+    """Periodic-padding layer for 3D input (e.g. image).
+
+    This layer can add periodic rows, columns, and depth to an image tensor.
+
+    Adapted from keras.layers.ZeroPadding3D by @jweyn
+
+    # Arguments
+        padding: int, or tuple of 3 ints, or tuple of 3 tuples of 2 ints.
+            - If int: the same symmetric padding
+                is applied to height and width.
+            - If tuple of 3 ints:
+                interpreted as two different
+                symmetric padding values for height and width:
+                `(symmetric_dim1_pad, symmetric_dim2_pad, symmetric_dim3_pad)`.
+            - If tuple of 3 tuples of 2 ints:
+                interpreted as
+                `((left_dim1_pad, right_dim1_pad),
+                  (left_dim2_pad, right_dim2_pad),
+                  (left_dim3_pad, right_dim3_pad))`
+        data_format: A string,
+            one of `"channels_last"` or `"channels_first"`.
+            The ordering of the dimensions in the inputs.
+            `"channels_last"` corresponds to inputs with shape
+            `(batch, spatial_dim1, spatial_dim2, spatial_dim3, channels)`
+            while `"channels_first"` corresponds to inputs with shape
+            `(batch, channels, spatial_dim1, spatial_dim2, spatial_dim3)`.
+            It defaults to the `image_data_format` value found in your
+            Keras config file at `~/.keras/keras.json`.
+            If you never set it, then it will be "channels_last".
+
+    # Input shape
+        5D tensor with shape:
+        - If `data_format` is `"channels_last"`:
+            `(batch, first_axis_to_pad, second_axis_to_pad, third_axis_to_pad,
+              depth)`
+        - If `data_format` is `"channels_first"`:
+            `(batch, depth,
+              first_axis_to_pad, second_axis_to_pad, third_axis_to_pad)`
+
+    # Output shape
+        5D tensor with shape:
+        - If `data_format` is `"channels_last"`:
+            `(batch, first_padded_axis, second_padded_axis, third_axis_to_pad,
+              depth)`
+        - If `data_format` is `"channels_first"`:
+            `(batch, depth,
+              first_padded_axis, second_padded_axis, third_axis_to_pad)`
+    """
+
+    def __init__(self,
+                 padding=(1, 1, 1),
+                 data_format=None,
+                 **kwargs):
+        super(PeriodicPadding3D, self).__init__(padding=padding,
+                                                data_format=data_format,
+                                                **kwargs)
+
+    def call(self, inputs):
+        if K.backend() == 'plaidml.keras.backend':
+            shape = inputs.shape.dims
+        else:
+            shape = inputs.shape
+        if self.data_format == 'channels_first':
+            low_slice = slice(shape[2] - self.padding[0][0], shape[2])
+            high_slice = slice(0, self.padding[0][1])
+            top_slice = slice(shape[3] - self.padding[1][0], shape[3])
+            bottom_slice = slice(0, self.padding[1][1])
+            left_slice = slice(shape[4] - self.padding[2][0], shape[4])
+            right_slice = slice(0, self.padding[2][1])
+            # Pad the horizontal
+            outputs = K.concatenate([inputs[:, :, :, :, left_slice], inputs, inputs[:, :, :, :, right_slice]], axis=4)
+            # Pad the vertical
+            outputs = K.concatenate([outputs[:, :, :, top_slice], outputs, outputs[:, :, :, bottom_slice]], axis=3)
+            # Pad the depth
+            outputs = K.concatenate([outputs[:, :, low_slice], outputs, outputs[:, :, high_slice]], axis=2)
+        else:
+            low_slice = slice(shape[1] - self.padding[0][0], shape[1])
+            high_slice = slice(0, self.padding[0][1])
+            top_slice = slice(shape[2] - self.padding[1][0], shape[2])
+            bottom_slice = slice(0, self.padding[1][1])
+            left_slice = slice(shape[3] - self.padding[2][0], shape[3])
+            right_slice = slice(0, self.padding[2][1])
+            # Pad the horizontal
+            outputs = K.concatenate([inputs[:, :, :, left_slice], inputs, inputs[:, :, :, right_slice]], axis=3)
+            # Pad the vertical
+            outputs = K.concatenate([outputs[:, :, top_slice], outputs, outputs[:, :, bottom_slice]], axis=2)
+            # Pad the depth
+            outputs = K.concatenate([outputs[:, low_slice], outputs, outputs[:, high_slice]], axis=1)
+        return outputs
+
+
 class FillPadding2D(ZeroPadding2D):
     """Fill-padding layer for 2D input (e.g. image).
 
@@ -308,98 +401,6 @@ class FillPadding2D(ZeroPadding2D):
         return outputs
 
 
-class PeriodicPadding3D(ZeroPadding3D):
-    """Periodic-padding layer for 3D input (e.g. image).
-
-    This layer can add periodic rows, columns, and depth to an image tensor.
-
-    Adapted from keras.layers.ZeroPadding3D by @jweyn
-
-    # Arguments
-        padding: int, or tuple of 3 ints, or tuple of 3 tuples of 2 ints.
-            - If int: the same symmetric padding
-                is applied to height and width.
-            - If tuple of 3 ints:
-                interpreted as two different
-                symmetric padding values for height and width:
-                `(symmetric_dim1_pad, symmetric_dim2_pad, symmetric_dim3_pad)`.
-            - If tuple of 3 tuples of 2 ints:
-                interpreted as
-                `((left_dim1_pad, right_dim1_pad),
-                  (left_dim2_pad, right_dim2_pad),
-                  (left_dim3_pad, right_dim3_pad))`
-        data_format: A string,
-            one of `"channels_last"` or `"channels_first"`.
-            The ordering of the dimensions in the inputs.
-            `"channels_last"` corresponds to inputs with shape
-            `(batch, spatial_dim1, spatial_dim2, spatial_dim3, channels)`
-            while `"channels_first"` corresponds to inputs with shape
-            `(batch, channels, spatial_dim1, spatial_dim2, spatial_dim3)`.
-            It defaults to the `image_data_format` value found in your
-            Keras config file at `~/.keras/keras.json`.
-            If you never set it, then it will be "channels_last".
-
-    # Input shape
-        5D tensor with shape:
-        - If `data_format` is `"channels_last"`:
-            `(batch, first_axis_to_pad, second_axis_to_pad, third_axis_to_pad,
-              depth)`
-        - If `data_format` is `"channels_first"`:
-            `(batch, depth,
-              first_axis_to_pad, second_axis_to_pad, third_axis_to_pad)`
-
-    # Output shape
-        5D tensor with shape:
-        - If `data_format` is `"channels_last"`:
-            `(batch, first_padded_axis, second_padded_axis, third_axis_to_pad,
-              depth)`
-        - If `data_format` is `"channels_first"`:
-            `(batch, depth,
-              first_padded_axis, second_padded_axis, third_axis_to_pad)`
-    """
-
-    def __init__(self,
-                 padding=(1, 1),
-                 data_format=None,
-                 **kwargs):
-        super(PeriodicPadding3D, self).__init__(padding=padding,
-                                                data_format=data_format,
-                                                **kwargs)
-
-    def call(self, inputs):
-        if K.backend() == 'plaidml.keras.backend':
-            shape = inputs.shape.dims
-        else:
-            shape = inputs.shape
-        if self.data_format == 'channels_first':
-            low_slice = slice(shape[2] - self.padding[0][0], shape[2])
-            high_slice = slice(0, self.padding[0][1])
-            top_slice = slice(shape[3] - self.padding[1][0], shape[3])
-            bottom_slice = slice(0, self.padding[1][1])
-            left_slice = slice(shape[4] - self.padding[2][0], shape[4])
-            right_slice = slice(0, self.padding[2][1])
-            # Pad the horizontal
-            outputs = K.concatenate([inputs[:, :, :, :, left_slice], inputs, inputs[:, :, :, :, right_slice]], axis=4)
-            # Pad the vertical
-            outputs = K.concatenate([outputs[:, :, :, top_slice], outputs, outputs[:, :, :, bottom_slice]], axis=3)
-            # Pad the depth
-            outputs = K.concatenate([outputs[:, :, low_slice], outputs, outputs[:, :, high_slice]], axis=2)
-        else:
-            low_slice = slice(shape[1] - self.padding[0][0], shape[1])
-            high_slice = slice(0, self.padding[0][1])
-            top_slice = slice(shape[2] - self.padding[1][0], shape[2])
-            bottom_slice = slice(0, self.padding[1][1])
-            left_slice = slice(shape[3] - self.padding[2][0], shape[3])
-            right_slice = slice(0, self.padding[2][1])
-            # Pad the horizontal
-            outputs = K.concatenate([inputs[:, :, :, left_slice], inputs, inputs[:, :, :, right_slice]], axis=3)
-            # Pad the vertical
-            outputs = K.concatenate([outputs[:, :, top_slice], outputs, outputs[:, :, bottom_slice]], axis=2)
-            # Pad the depth
-            outputs = K.concatenate([outputs[:, low_slice], outputs, outputs[:, high_slice]], axis=1)
-        return outputs
-
-
 class FillPadding3D(ZeroPadding3D):
     """Fill-padding layer for 3D input (e.g. image).
 
@@ -451,7 +452,7 @@ class FillPadding3D(ZeroPadding3D):
     """
 
     def __init__(self,
-                 padding=(1, 1),
+                 padding=(1, 1, 1),
                  data_format=None,
                  **kwargs):
         super(FillPadding3D, self).__init__(padding=padding, data_format=data_format, **kwargs)
@@ -520,6 +521,138 @@ class FillPadding3D(ZeroPadding3D):
                 right_slice = outputs[:, :, :, slice(0, 0)]
             outputs = K.concatenate([left_slice, outputs, right_slice], axis=3)
         return outputs
+
+
+class TFPadding2D(ZeroPadding2D):
+    """Padding layer for 2D input (e.g. image) using TensorFlow's padding function.
+
+    Adapted from keras.layers.ZeroPadding2D by @jweyn
+
+    # Arguments
+        padding: int, or tuple of 2 ints, or tuple of 2 tuples of 2 ints.
+            - If int: the same symmetric padding
+                is applied to height and width.
+            - If tuple of 2 ints:
+                interpreted as two different
+                symmetric padding values for height and width:
+                `(symmetric_height_pad, symmetric_width_pad)`.
+            - If tuple of 2 tuples of 2 ints:
+                interpreted as
+                `((top_pad, bottom_pad), (left_pad, right_pad))`
+        data_format: A string,
+            one of `"channels_last"` or `"channels_first"`.
+            The ordering of the dimensions in the inputs.
+            `"channels_last"` corresponds to inputs with shape
+            `(batch, height, width, channels)` while `"channels_first"`
+            corresponds to inputs with shape
+            `(batch, channels, height, width)`.
+            It defaults to the `image_data_format` value found in your
+            Keras config file at `~/.keras/keras.json`.
+            If you never set it, then it will be "channels_last".
+        mode: A string,
+            one of `"CONSTANT"`, `"SYMMETRIC"`, or `"REFLECT"`.
+        constant_values: A float. The value to pad if mode=='CONSTANT'.
+
+    # Input shape
+        5D tensor with shape:
+        - If `data_format` is `"channels_last"`:
+            `(batch, first_axis_to_pad, second_axis_to_pad, third_axis_to_pad,
+              depth)`
+        - If `data_format` is `"channels_first"`:
+            `(batch, depth,
+              first_axis_to_pad, second_axis_to_pad, third_axis_to_pad)`
+
+    # Output shape
+        5D tensor with shape:
+        - If `data_format` is `"channels_last"`:
+            `(batch, first_padded_axis, second_padded_axis, third_axis_to_pad,
+              depth)`
+        - If `data_format` is `"channels_first"`:
+            `(batch, depth,
+              first_padded_axis, second_padded_axis, third_axis_to_pad)`
+    """
+
+    def __init__(self,
+                 padding=(1, 1),
+                 data_format=None,
+                 mode='CONSTANT',
+                 constant_values=0.,
+                 **kwargs):
+        super(TFPadding2D, self).__init__(padding=padding, data_format=data_format, **kwargs)
+        self.mode = mode
+        self.constant_values = constant_values
+
+    def call(self, inputs):
+        if self.data_format == 'channels_first':
+            padding = ((0, 0), (0, 0)) + self.padding
+        else:
+            padding = ((0, 0),) + self.padding + ((0, 0),)
+        return tf.pad(inputs, padding, mode=self.mode, constant_values=self.constant_values)
+
+
+class TFPadding3D(ZeroPadding3D):
+    """Padding layer for 3D input (e.g. image) using TensorFlow's padding function.
+
+    Adapted from keras.layers.ZeroPadding3D by @jweyn
+
+    # Arguments
+        padding: int, or tuple of 3 ints, or tuple of 3 tuples of 2 ints.
+            - If int: the same symmetric padding
+                is applied to height and width.
+            - If tuple of 3 ints:
+                interpreted as two different
+                symmetric padding values for height and width:
+                `(symmetric_dim1_pad, symmetric_dim2_pad, symmetric_dim3_pad)`.
+            - If tuple of 3 tuples of 2 ints:
+                interpreted as
+                `((left_dim1_pad, right_dim1_pad),
+                  (left_dim2_pad, right_dim2_pad),
+                  (left_dim3_pad, right_dim3_pad))`
+        data_format: A string,
+            one of `"channels_last"` or `"channels_first"`.
+            The ordering of the dimensions in the inputs.
+            `"channels_last"` corresponds to inputs with shape
+            `(batch, spatial_dim1, spatial_dim2, spatial_dim3, channels)`
+            while `"channels_first"` corresponds to inputs with shape
+            `(batch, channels, spatial_dim1, spatial_dim2, spatial_dim3)`.
+            It defaults to the `image_data_format` value found in your
+            Keras config file at `~/.keras/keras.json`.
+            If you never set it, then it will be "channels_last".
+        mode: A string,
+            one of `"CONSTANT"`, `"SYMMETRIC"`, or `"REFLECT"`.
+        constant_values: A float. The value to pad if mode=='CONSTANT'.
+
+    # Input shape
+        4D tensor with shape:
+        - If `data_format` is `"channels_last"`:
+            `(batch, rows, cols, channels)`
+        - If `data_format` is `"channels_first"`:
+            `(batch, channels, rows, cols)`
+
+    # Output shape
+        4D tensor with shape:
+        - If `data_format` is `"channels_last"`:
+            `(batch, padded_rows, padded_cols, channels)`
+        - If `data_format` is `"channels_first"`:
+            `(batch, channels, padded_rows, padded_cols)`
+    """
+
+    def __init__(self,
+                 padding=(1, 1, 1),
+                 data_format=None,
+                 mode='CONSTANT',
+                 constant_values=0.,
+                 **kwargs):
+        super(TFPadding3D, self).__init__(padding=padding, data_format=data_format, **kwargs)
+        self.mode = mode
+        self.constant_values = constant_values
+
+    def call(self, inputs):
+        if self.data_format == 'channels_first':
+            padding = ((0, 0), (0, 0)) + self.padding
+        else:
+            padding = ((0, 0),) + self.padding + ((0, 0),)
+        return tf.pad(inputs, padding, mode=self.mode, constant_values=self.constant_values)
 
 
 def slice_layer(start, end, step=None, axis=1):
