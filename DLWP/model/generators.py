@@ -332,7 +332,7 @@ class SeriesDataGenerator(Sequence):
     """
 
     def __init__(self, model, ds, input_sel=None, output_sel=None, input_time_steps=1, output_time_steps=1,
-                 sequence=None, add_insolation=False, batch_size=32, shuffle=False, remove_nan=True, load=True):
+                 sequence=None, add_insolation=False, batch_size=32, shuffle=False, remove_nan=True, load='required'):
         """
         Initialize a SeriesDataGenerator.
 
@@ -348,7 +348,13 @@ class SeriesDataGenerator(Sequence):
         :param batch_size: int: number of samples to take at a time from the dataset
         :param shuffle: bool: if True, randomly select batches
         :param remove_nan: bool: if True, remove any samples with NaNs
-        :param load: bool: if True, load the data in memory (highly recommended if enough system memory is available)
+        :param load: str: option for loading data into memory. If it evaluates to negative, no memory loading is done.
+            THIS IS LIKELY VERY SLOW.
+            'full': load the full dataset. May use a lot of memory.
+            'required': load only the required variables, but this also loads two separate datasets for predictors and
+                targets
+            'minimal': load only one copy of the data, but also loads all of the variables. This may use half as much
+                memory as 'required', but only if there are no unused extra variables in the file.
         """
         self.model = model
         if not hasattr(ds, 'predictors'):
@@ -358,7 +364,15 @@ class SeriesDataGenerator(Sequence):
         assert int(batch_size) > 0
         if sequence is not None:
             assert int(sequence) > 0
+        if not(not load):
+            if load not in ['full', 'required', 'minimal']:
+                if isinstance(load, bool):
+                    load = 'required'
+                else:
+                    raise ValueError("'load' must be one of 'full', 'required', or 'minimal'")
         self.ds = ds
+        if load == 'full':
+            ds.load()
         self._batch_size = batch_size
         self._shuffle = shuffle
         self._remove_nan = remove_nan
@@ -383,9 +397,11 @@ class SeriesDataGenerator(Sequence):
         self._input_time_steps = input_time_steps
         self._output_time_steps = output_time_steps
 
+        if load == 'minimal':
+            self.da.load()
         self.input_da = self.da.sel(**self._input_sel)
         self.output_da = self.da.sel(**self._output_sel)
-        if load:
+        if load == 'required':
             self.input_da.load()
             self.output_da.load()
 

@@ -589,6 +589,14 @@ class TFPadding2D(ZeroPadding2D):
             padding = ((0, 0),) + self.padding + ((0, 0),)
         return tf.pad(inputs, padding, mode=self.mode, constant_values=self.constant_values)
 
+    def get_config(self):
+        config = {'padding': self.padding,
+                  'data_format': self.data_format,
+                  'mode': self.mode,
+                  'constant_values': self.constant_values}
+        base_config = super(TFPadding2D, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
 
 class TFPadding3D(ZeroPadding3D):
     """Padding layer for 3D input (e.g. image) using TensorFlow's padding function.
@@ -653,6 +661,14 @@ class TFPadding3D(ZeroPadding3D):
         else:
             padding = ((0, 0),) + self.padding + ((0, 0),)
         return tf.pad(inputs, padding, mode=self.mode, constant_values=self.constant_values)
+
+    def get_config(self):
+        config = {'padding': self.padding,
+                  'data_format': self.data_format,
+                  'mode': self.mode,
+                  'constant_values': self.constant_values}
+        base_config = super(TFPadding3D, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
 
 
 def slice_layer(start, end, step=None, axis=1):
