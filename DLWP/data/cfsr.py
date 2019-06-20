@@ -194,7 +194,7 @@ class CFSReanalysis(object):
         :param levels: list of integer pressure height levels (mb / hPa)
         :return:
         """
-        self.level_coord = sorted([l for l in levels if 0 < int(l) <= 1000])
+        self.level_coord = sorted([l for l in levels if 0 <= int(l) <= 1000])
 
     def closest_lat_lon(self, lat, lon):
         """
@@ -425,9 +425,9 @@ class CFSReanalysis(object):
             for grb in grib_data:
                 try:
                     grib_index.append([int(grb.discipline), int(grb.parameterCategory),
-                                       int(grb.parameterNumber), int(grb.level)])
+                                       int(grb.parameterNumber), grb.levelType, int(grb.level)])
                     grib_index_no_level.append([int(grb.discipline), int(grb.parameterCategory),
-                                                int(grb.parameterNumber)])
+                                                int(grb.parameterNumber), grb.levelType])
                 except RuntimeError:
                     grib_index.append([])
                     grib_index_no_level.append([])
@@ -439,7 +439,7 @@ class CFSReanalysis(object):
                     if var not in nc_fid.variables.keys():
                         if verbose:
                             print('PID %s: Creating variable %s' % (pid, var))
-                        if grib2_table[row, 6] == 'isobaricInhPa':
+                        if grib2_table[row, 6] == 'pl':
                             nc_var = nc_fid.createVariable(var, np.float32, ('time', 'level', 'lat', 'lon'), zlib=True)
                         else:
                             nc_var = nc_fid.createVariable(var, np.float32, ('time', 'lat', 'lon'), zlib=True)
@@ -448,7 +448,7 @@ class CFSReanalysis(object):
                             'units': grib2_table[row, 5],
                             '_FillValue': fill_value
                         })
-                    if grib2_table[row, 6] == 'isobaricInhPa':
+                    if grib2_table[row, 6] == 'pl':
                         for level_index, level in enumerate(levels):
                             try:
                                 if verbose:
@@ -456,7 +456,8 @@ class CFSReanalysis(object):
                                 # Match a list containing discipline, parameterCategory, parameterNumber, level.
                                 # Add one because grib indexing starts at 1.
                                 grib_key = grib_index.index([int(grib2_table[row, 1]), int(grib2_table[row, 2]),
-                                                             int(grib2_table[row, 3]), int(level)]) + 1
+                                                             int(grib2_table[row, 3]), grib2_table[row, 6],
+                                                             int(level)]) + 1
                                 if verbose:
                                     print('  found %s' % grib_data[grib_key])
                                 data = np.array(grib_data[grib_key].values, dtype=np.float32)
@@ -473,7 +474,7 @@ class CFSReanalysis(object):
                             # Match a list containing discipline, parameterCategory, parameterNumber, level.
                             # Add one because grib indexing starts at 1.
                             grib_key = grib_index_no_level.index([int(grib2_table[row, 1]), int(grib2_table[row, 2]),
-                                                                  int(grib2_table[row, 3])]) + 1
+                                                                  int(grib2_table[row, 3]), grib2_table[row, 6]]) + 1
                             if verbose:
                                 print('  found %s' % grib_data[grib_key])
                             data = np.array(grib_data[grib_key].values, dtype=np.float32)
