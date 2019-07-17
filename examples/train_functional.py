@@ -318,10 +318,11 @@ end_time = time.time()
 # Save the model
 if model_file is not None:
     save_model(dlwp, model_file, history=history)
+    print('Wrote model %s' % model_file)
 
 # Evaluate the model
 print("\nTrain time -- %s seconds --" % (end_time - start_time))
 if validation_data is not None:
-    score = dlwp.evaluate(*val_generator.generate([]), verbose=0)
+    score = dlwp.evaluate(*val_generator.generate([], scale_and_impute=False), verbose=0)
     print('Validation loss:', score[0])
     print('Validation mean absolute error:', score[1])

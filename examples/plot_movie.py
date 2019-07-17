@@ -24,29 +24,26 @@ from mpl_toolkits.basemap import Basemap
 
 # Data file
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
-predictor_file = '%s/cfs_analysis_2007-2009_hgt-thick_300-500-700_NH_T2.nc' % root_directory
+predictor_file = '%s/cfs_6h_1979-2010_z500_tau300-700.nc' % root_directory
 
 # Model name
-model = '%s/dlwp_6h_tau_z-tau-out_t2seq6-skip' % root_directory
-model_label = r'$\tau$ sequence-skip'
+model = '%s/dlwp_6h_global_tau-lstm_z-tau-out' % root_directory
+model_label = r'$\tau$ LSTM global'
 
 # Selection from the predictor file
-input_selection = {'variable': ['HGT', 'THICK']}
-output_selection = {'variable': ['HGT', 'THICK']}
+input_selection = {'varlev': ['HGT/500', 'THICK/300-700']}
+output_selection = {'varlev': ['HGT/500', 'THICK/300-700']}
 input_time_steps = 2
 output_time_steps = 2
 add_insolation = False
 
 # Date(s) of plots: the initialization times
 plot_dates = list(pd.date_range('2007-04-15', '2007-04-15', freq='D').to_pydatetime())
-num_plot_steps = 48
+num_plot_steps = 336 // 6
 model_dt = 6
 
 # Variable and level index to plot; scaling option
-selection = {
-    'variable': 'HGT',
-    'level': 500
-}
+selection = {'varlev': 'HGT/500'}
 scale_variables = True
 scale_factor = 0.1
 
@@ -69,8 +66,8 @@ laplace_range = [-2., 2.]
 laplace_scale = 1.e4 * 9.81 / (2 * 7.29e-5)
 
 # Output file and other small details
-plot_directory = './Plots'
-plot_file_name = 'MAP_tau-t2seq6-skip'
+plot_directory = './Plots/tau-lstm-global'
+plot_file_name = 'MAP_tau-lstm-global'
 plot_file_type = 'png'
 
 
@@ -119,6 +116,9 @@ def add_pole(da):
 
 
 def add_southern_hemisphere(da):
+    if da.lat.min() < 0.:
+        print('Latitudes below 0 exist; not adding southern hemisphere.')
+        return da
     da_s = da.assign_coords(lat=(-1. * da.lat.values))
     result = xr.concat([da, da_s.sel(lat=(da_s.lat < 0.0)).isel(lat=slice(None, None, -1))], dim='lat')
     return result
@@ -173,6 +173,8 @@ if crop_north_pole:
 # Get the mean and std of the data
 variable_mean = data.sel(**selection).variables['mean'].values
 variable_std = data.sel(**selection).variables['std'].values
+
+os.makedirs(plot_directory, exist_ok=True)
 
 
 #%% Make the verification and forecast
@@ -259,7 +261,7 @@ if plot_laplace:
 
 #%% Plot the forecasts
 
-basemap = Basemap(llcrnrlon=0, llcrnrlat=0, urcrnrlon=360, urcrnrlat=90,
+basemap = Basemap(llcrnrlon=0, llcrnrlat=np.min(verification.lat), urcrnrlon=360, urcrnrlat=90,
                   resolution='l', projection='cyl', lat_0=40., lon_0=0.)
 
 for date in plot_dates:

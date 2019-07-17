@@ -13,6 +13,7 @@ from keras.callbacks import Callback, EarlyStopping
 from keras.layers.convolutional import ZeroPadding2D, ZeroPadding3D
 from keras.layers.local import LocallyConnected2D
 from keras.layers import Lambda, Layer
+from keras.losses import mean_absolute_error, mean_squared_error
 from keras.utils import conv_utils
 from keras.engine.base_layer import InputSpec
 import numpy as np
@@ -984,6 +985,48 @@ def latitude_weighted_loss(loss_function, lats, output_shape, axis=-2, weighting
         return loss_function(y_true * weights, y_pred * weights)
 
     return loss
+
+
+def anomaly_correlation_loss(y_true, y_pred, mean=0., regularize_mean='mse', reverse=True):
+    """
+    Create a loss function for anomaly correlation. FOR NOW, ASSUMES THAT THE CLIMATOLOGICAL MEAN IS 0, AND THEREFORE
+    REQUIRES DATA SCALED TO REMOVE SPATIALLY-DEPENDENT MEAN.
+
+    :param y_true: Tensor: target values
+    :param y_pred: Tensor: model-predicted values
+    :param mean: float: subtract this global mean from all predicted and target array values. IGNORED FOR NOW.
+    :param regularize_mean: str or None: if not None, also penalizes a form of mean squared error:
+        global: penalize differences in the global mean
+        spatial: penalize differences in spatially-averaged mean (last two dimensions)
+        mse: penalize the mean squared error
+        mae: penalize the mean absolute error
+    :param reverse: bool: if True, inverts the loss so that -1 is the target score
+    :return: float: anomaly correlation loss
+    """
+    if regularize_mean is not None:
+        assert regularize_mean in ['global', 'spatial', 'mse', 'mae']
+    a = (K.mean(y_pred * y_true)
+         / K.sqrt(K.mean(K.square(y_pred)) * K.mean(K.square(y_true))))
+    if regularize_mean is not None:
+        if regularize_mean == 'global':
+            m = K.abs((K.mean(y_true) - K.mean(y_pred)) / K.mean(y_true))
+        elif regularize_mean == 'spatial':
+            m = K.mean(K.abs((K.mean(y_true, axis=[-2, -1]) - K.mean(y_pred, axis=[-2, -1]))
+                             / K.mean(y_true, axis=[-2, -1])))
+        elif regularize_mean == 'mse':
+            m = mean_squared_error(y_true, y_pred)
+        elif regularize_mean == 'mae':
+            m = mean_absolute_error(y_true, y_pred)
+    if reverse:
+        if regularize_mean is not None:
+            return m - a
+        else:
+            return -a
+    else:
+        if regularize_mean:
+            return a - m
+        else:
+            return a
 
 
 # ==================================================================================================================== #

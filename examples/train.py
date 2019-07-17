@@ -16,7 +16,7 @@ import xarray as xr
 from datetime import datetime
 from DLWP.model import DLWPNeuralNet, SeriesDataGenerator
 from DLWP.util import save_model, train_test_split_ind
-from DLWP.custom import RNNResetStates, EarlyStoppingMin, latitude_weighted_loss
+from DLWP.custom import RNNResetStates, EarlyStoppingMin, latitude_weighted_loss, anomaly_correlation_loss
 from keras.regularizers import l2
 from keras.losses import mean_squared_error
 from keras.callbacks import History, TensorBoard
@@ -26,40 +26,42 @@ from keras.callbacks import History, TensorBoard
 
 # File paths and names
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
-predictor_file = os.path.join(root_directory, 'cfs_6h_1979-2010_z500-th3-7-w700-rh850-pwat_NH_T2.nc')
-model_file = os.path.join(root_directory, 'dlwp_6h_z500-th3-7-pwat_NH_T2')
-log_directory = os.path.join(root_directory, 'logs', 'pwat')
+predictor_file = os.path.join(root_directory, 'cfs_6h_1979-2010_z500-1000_tau_sfc_NH.nc')
+model_file = os.path.join(root_directory, 'dlwp_6h_tau-lstm_acc')
+log_directory = os.path.join(root_directory, 'logs', 'tau-lstm-acc')
 
 # NN parameters. Regularization is applied to LSTM layers by default. weight_loss indicates whether to weight the
 # loss function preferentially in the mid-latitudes.
 model_is_convolutional = True
-model_is_recurrent = False
+model_is_recurrent = True
 min_epochs = 200
 max_epochs = 1000
 patience = 50
 batch_size = 64
 lambda_ = 1.e-4
 weight_loss = False
+acc_loss = True
+scale_data_by_mean = True
 shuffle = True
 
 # Data parameters. Specify the input variables/levels, output variables/levels, and time steps in/out. Note that for
 # LSTM layers, the model can only predict effectively if the output time steps is 1 or equal to the input time steps.
 # Ensure that the selections use LISTS of values (even for only 1) to keep dimensions correct.
-input_selection = {'varlev': ['HGT/500', 'THICK/300-700', 'P WAT/0']}
-output_selection = {'varlev': ['HGT/500']}
+input_selection = {'varlev': ['HGT/500', 'THICK/300-700']}
+output_selection = {'varlev': ['HGT/500', 'THICK/300-700']}
 input_time_steps = 2
 output_time_steps = 2
 # Option to crop the north pole. Necessary for getting an even number of latitudes for up-sampling layers.
 crop_north_pole = True
 # Add incoming solar radiation forcing
-add_solar = True
+add_solar = False
 
 # If system memory permits, loading the predictor data can greatly increase efficiency when training on GPUs, if the
 # train computation takes less time than the data loading.
-load_memory = True
+load_memory = 'required'
 
 # Use multiple GPUs, if available
-n_gpu = 2
+n_gpu = 1
 
 # Force use of the keras model.fit() method. May run faster in some instances, but uses (input_time_steps +
 # output_time_steps) times more memory.
@@ -89,7 +91,7 @@ if crop_north_pole:
 #%% Build a model and the data generators
 
 dlwp = DLWPNeuralNet(is_convolutional=model_is_convolutional, is_recurrent=model_is_recurrent, time_dim=time_dim,
-                     scaler_type=None, scale_targets=False)
+                     scaler_type='StandardScaler' if scale_data_by_mean else None, scale_targets=False)
 
 # Find the validation set
 if isinstance(validation_set, int):
@@ -140,19 +142,20 @@ cs = generator.convolution_shape
 cso = generator.output_convolution_shape
 layers = (
     # --- These layers add a convolutional LSTM at the beginning --- #
-    # ('Reshape', (generator.shape_2d,), {'input_shape': cs}),
-    # ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
-    # ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
-    # ('Reshape', ((cs[0], cs[1], cs[2] + 4, cs[3] + 4),), None),
-    # ('ConvLSTM2D', (4 * cs[1], 3), {
-    #     'dilation_rate': 2,
-    #     'padding': 'valid',
-    #     'data_format': 'channels_first',
-    #     'activation': 'tanh',
-    #     'return_sequences': True,
-    #     'kernel_regularizer': l2(lambda_)
-    # }),
-    # ('Reshape', ((4 * cs[0] * cs[1], cs[2], cs[3]),), None),
+    ('PeriodicPadding3D', ((0, 0, 2),), {
+        'data_format': 'channels_first',
+        'input_shape': cs
+    }),
+    ('ZeroPadding3D', ((0, 2, 0),), {'data_format': 'channels_first'}),
+    ('ConvLSTM2D', (4 * cs[1], 3), {
+        'dilation_rate': 2,
+        'padding': 'valid',
+        'data_format': 'channels_first',
+        'activation': 'tanh',
+        'return_sequences': True,
+        'kernel_regularizer': l2(lambda_)
+    }),
+    ('Reshape', ((4 * cs[0] * cs[1], cs[2], cs[3]),), None),
     # -------------------------------------------------------------- #
     ('PeriodicPadding2D', ((0, 2),), {
         'data_format': 'channels_first',
@@ -209,20 +212,23 @@ layers = (
     ('PeriodicPadding2D', ((0, 2),), {'data_format': 'channels_first'}),
     ('ZeroPadding2D', ((2, 0),), {'data_format': 'channels_first'}),
     # --- Change the number of filters to cso[0] * cso[1] for LSTM model --- #
-    ('Conv2D', (cso[0], 5), {
+    ('Conv2D', (cso[0] * cso[1], 5), {
         'padding': 'valid',
         'activation': 'linear',
-        'data_format': 'channels_first'
+        'data_format': 'channels_first',
+        # 'return_sequences': True,
     }),
-    # ('Reshape', (cso,), None)
+    ('Reshape', (cso,), None)
 )
 
 # Example custom loss function: pass to loss= in build_model()
-if weight_loss:
-    loss_function = latitude_weighted_loss(mean_squared_error, generator.ds.lat.values, generator.convolution_shape,
-                                           axis=-2, weighting='midlatitude')
+if acc_loss:
+    loss_function = anomaly_correlation_loss
 else:
-    loss_function = 'mse'
+    loss_function = mean_squared_error
+if weight_loss:
+    loss_function = latitude_weighted_loss(loss_function, generator.ds.lat.values, generator.convolution_shape,
+                                           axis=-2, weighting='midlatitude')
 
 # Build the model
 try:
@@ -240,10 +246,11 @@ print(dlwp.base_model.summary())
 # to automate its use in the Keras fit_generator method, so disable it when dealing with data to fit the scaler and
 # imputer. If using pre-scaled data (i.e., dlwp was initialized with scaler_type=None and the Preprocessor data was
 # generated with scale_variables=True), this step should be omitted.
-fit_set = list(range(2))  # Use a much larger value when it matters
-p_fit, t_fit = generator.generate(fit_set, scale_and_impute=False)
-dlwp.init_fit(p_fit, t_fit)
-p_fit, t_fit = (None, None)
+if scale_data_by_mean:
+    print('Fitting scaler...')
+    p_fit, t_fit = generator.generate([], scale_and_impute=False)
+    dlwp.init_fit(p_fit, t_fit, scaler_kwargs={'with_std': False, 'copy': False})
+    p_fit, t_fit = (None, None)
 
 
 #%% Train, evaluate, and save the model
@@ -260,18 +267,19 @@ if use_keras_fit:
     dlwp.fit(p_train, t_train, batch_size=batch_size, epochs=max_epochs, verbose=1, validation_data=val,
              shuffle=shuffle, callbacks=[history, RNNResetStates(), early])
 else:
-    dlwp.fit_generator(generator, epochs=max_epochs, verbose=2, validation_data=val_generator,
+    dlwp.fit_generator(generator, epochs=max_epochs, verbose=1, validation_data=val_generator,
                        use_multiprocessing=True, callbacks=[history, RNNResetStates(), early])
 end_time = time.time()
-
-# Evaluate the model
-print("\nTrain time -- %s seconds --" % (end_time - start_time))
-if validation_data is not None:
-    score = dlwp.evaluate(*val_generator.generate([]), verbose=0)
-    print('Validation loss:', score[0])
-    print('Validation mean absolute error:', score[1])
 
 # Save the model
 if model_file is not None:
     save_model(dlwp, model_file, history=history)
     print('Wrote model %s' % model_file)
+
+# Evaluate the model
+print("\nTrain time -- %s seconds --" % (end_time - start_time))
+if validation_data is not None:
+    score = dlwp.evaluate(*val_generator.generate([], scale_and_impute=False), verbose=0)
+    print('Validation loss:', score[0])
+    print('Validation mean absolute error:', score[1])
+

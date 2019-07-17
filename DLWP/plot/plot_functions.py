@@ -267,8 +267,6 @@ def zonal_mean_plot(obs_mean, obs_std, pred_mean, pred_std, f_hour, model_name='
     plt.plot(pred_mean, pred_mean.lat, label='%d-hour prediction' % f_hour, color='C1')
     plt.legend(loc='best')
     plt.grid(True, color='lightgray', zorder=-100)
-    plt.plot(pred_mean - pred_std, pred_mean.lat, 'k:', linewidth=0.7)
-    plt.plot(pred_mean + pred_std, pred_mean.lat, 'k:', linewidth=0.7)
     plt.xlabel('zonal mean height')
     plt.ylabel('latitude')
     plt.ylim([0., 90.])

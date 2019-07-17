@@ -169,18 +169,20 @@ class DLWPNeuralNet(object):
         else:
             return X_transform.reshape(X_shape)
 
-    def init_fit(self, predictors, targets):
+    def init_fit(self, predictors, targets, scaler_kwargs=None):
         """
         Initialize the Imputer and Scaler of the model manually. This is useful for fitting the data pre-processors
         on a larger set of data before calls to the model 'fit' method with smaller sets of data and initialize=False.
 
         :param predictors: ndarray: predictor data
         :param targets: ndarray: target data
+        :param scaler_kwargs: dict: arguments passed to create the Scaler
         """
+        scaler_kwargs = scaler_kwargs or {}
         if self.impute:
             self.imputer_fit(predictors, targets)
             predictors, targets = self.imputer_transform(predictors, y=targets)
-        self.scaler_fit(predictors, targets)
+        self.scaler_fit(predictors, targets, **scaler_kwargs)
         self._is_init_fit = True
 
     def fit(self, predictors, targets, initialize=True, **kwargs):

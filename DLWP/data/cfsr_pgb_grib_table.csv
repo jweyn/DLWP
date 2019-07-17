@@ -1,6 +1,6 @@
 # variable,discipline,category,code,long_name,units,level_type
 TMP,0,0,0,Temperature,K,pl
-TMP2,0,0,0,Temperature,K,sfc
+TMP2,0,0,0,2-meter temperature,K,sfc
 POT,0,0,2,Potential temperature,K,sigma
 T MAX,0,0,4,Maximum temperature,K,sfc
 T MIN,0,0,5,Minimum temperature,K,sfc

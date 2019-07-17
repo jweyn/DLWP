@@ -13,13 +13,13 @@ from DLWP.model.preprocessing import mean_by_batch, std_by_batch
 
 
 root_directory = '/home/disk/wave2/jweyn/Data'
-predictor_file = '%s/DLWP/cfs_analysis_1979-2010_z3-5-7_NH.nc' % root_directory
-new_file = '%s/DLWP/cfs_analysis_1979-2010_z500_tau300-700_NH.nc' % root_directory
+predictor_file = '%s/DLWP/cfs_6h_1979-2010_z500-1000_tau300-700_sfc_NH.nc' % root_directory
+new_file = '%s/DLWP/cfs_6h_1979-2010_z500-1000_tau_sfc_NH.nc' % root_directory
 
-upper_sel = {'varlev': ['HGT/300']}
-lower_sel = {'varlev': ['HGT/700']}
-keep_sel = {'varlev': ['HGT/500']}
-new_var_coord = 'THICK/300-700'
+upper_sel = {'varlev': ['HGT/500']}
+lower_sel = {'varlev': ['HGT/1000']}
+keep_sel = {}
+new_var_coord = 'THICK/500-1000'
 
 
 ds = xr.open_dataset(predictor_file)
@@ -67,6 +67,8 @@ if hasattr(ds, 'targets'):
 
     upper_var = ds.targets.sel(**upper_sel) * upper_std + upper_mean
     lower_var = ds.targets.sel(**lower_sel) * lower_std + lower_mean
+    upper_var = upper_var.assign_coords(varlev=[new_var_coord])
+    lower_var = lower_var.assign_coords(varlev=[new_var_coord])
     t_thick = upper_var - lower_var
 
     if ds.attrs['scaling'] == 'True':
