@@ -48,6 +48,10 @@ class TimeSeriesEstimator(object):
         self._output_sel = {}
         self._input_sel = {}
         self._dt = self.generator.ds['sample'][1] - self.generator.ds['sample'][0]
+        if hasattr(self.generator, '_interval'):
+            self._interval = self.generator._interval
+        else:
+            self._interval = 1
 
         # Generate the selections needed for inputs and outputs
         if self._uses_varlev:
@@ -167,8 +171,8 @@ class TimeSeriesEstimator(object):
                 in_times = np.arange(self._input_time_steps) + (self._output_time_steps - self._input_time_steps)
         effective_steps = int(np.ceil(steps / es))
 
-        # Load data from the generator
-        p, t = self.generator.generate([])
+        # Load data from the generator, without any scaling as this will be done by the model's predict method
+        p, t = self.generator.generate([], scale_and_impute=False)
         p_shape = tuple(p.shape)
 
         # Add metadata. The sample dimension denotes the *start* time of the sample, for insolation purposes. This is
@@ -214,7 +218,7 @@ class TimeSeriesEstimator(object):
                 r_da = xr.DataArray(
                     result[s].reshape((p_shape[0], self._output_time_steps, -1,) +
                                       self.generator.convolution_shape[-2:]),
-                    coords=[p_da.sample + es * self._dt,
+                    coords=[p_da.sample + (es + self._interval - 1) * self._dt,
                             np.arange(self._output_time_steps), self._output_sel['varlev'],
                             self.generator.ds.lat, self.generator.ds.lon],
                     dims=['sample', 'time_step', 'varlev', 'lat', 'lon']
@@ -256,7 +260,8 @@ class TimeSeriesEstimator(object):
             result = xr.DataArray(
                 result,
                 coords=[
-                    np.arange(self._dt.values, (effective_steps * es + 1) * self._dt.values, es * self._dt.values),
+                    np.arange(self._dt.values, (effective_steps * (es + self._interval - 1) + 1) * self._dt.values,
+                              (es + self._interval - 1) * self._dt.values),
                     sample_coord + (self._input_time_steps - 1) * self._dt,
                     range(self._output_time_steps),
                     self._output_sel['varlev'],
@@ -275,7 +280,9 @@ class TimeSeriesEstimator(object):
             result = xr.DataArray(
                 result,
                 coords=[
-                    np.arange(self._dt.values, (effective_steps * es + 1) * self._dt.values, self._dt.values),
+                    np.array([(np.arange(1, es + 1) + (e + 1) * self._interval) * self._dt.values
+                              for e in range(effective_steps)]).flatten(),
+                    # np.arange(self._dt.values, (effective_steps * es + 1) * self._dt.values, self._dt.values),
                     sample_coord + (self._input_time_steps - 1) * self._dt,
                     self._output_sel['varlev'],
                     self.generator.ds.lat,

@@ -9,7 +9,6 @@ Simple routines for graphically evaluating the performance of a DLWP model.
 """
 
 import keras.backend as K
-from keras.losses import mean_squared_error
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -23,7 +22,6 @@ from DLWP.model import SeriesDataGenerator, TimeSeriesEstimator, DLWPFunctional
 from DLWP.model import verify
 from DLWP.plot import history_plot, forecast_example_plot, zonal_mean_plot
 from DLWP.util import load_model, train_test_split_ind
-from DLWP.custom import latitude_weighted_loss
 from DLWP.data import CFSReforecast
 
 
@@ -165,19 +163,8 @@ if scale_variables:
 for m, model in enumerate(models):
     print('Loading model %s...' % model)
 
-    # Some tolerance for using a weighted loss function. Unreliable but doesn't hurt.
-    if 'weight' in model.lower():
-        lats = validation_data.lat.values
-        output_shape = (validation_data.dims['lat'], validation_data.dims['lon'])
-        if crop_north_pole:
-            lats = lats[1:]
-        customs = {'loss': latitude_weighted_loss(mean_squared_error, lats, output_shape, axis=-2,
-                                                  weighting='midlatitude')}
-    else:
-        customs = None
-
     # Load the model
-    dlwp, history = load_model('%s/%s' % (root_directory, model), True, custom_objects=customs, gpus=1)
+    dlwp, history = load_model('%s/%s' % (root_directory, model), True, gpus=1)
 
     # Assign forecast hour coordinate
     f_hours.append(np.arange(dt, num_forecast_steps * dt + 1., dt))

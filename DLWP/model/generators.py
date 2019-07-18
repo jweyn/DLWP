@@ -332,7 +332,8 @@ class SeriesDataGenerator(Sequence):
     """
 
     def __init__(self, model, ds, input_sel=None, output_sel=None, input_time_steps=1, output_time_steps=1,
-                 sequence=None, add_insolation=False, batch_size=32, shuffle=False, remove_nan=True, load='required'):
+                 sequence=None, interval=1, add_insolation=False, batch_size=32, shuffle=False, remove_nan=True,
+                 load='required'):
         """
         Initialize a SeriesDataGenerator.
 
@@ -344,6 +345,8 @@ class SeriesDataGenerator(Sequence):
         :param output_time_steps: int: number of time steps in the output features (recommended either 1 or the same
             as input_time_steps)
         :param sequence: int or None: if int, then the output targets is a list of sequence consecutive forecast steps
+        :param interval: int: the number of steps to take when producing target data. For example, if interval is 2 and
+            the spacing between time steps is 6 h, the target will be 12 hours in the future.
         :param add_insolation: bool: if True, add insolation to the inputs. Incompatible with 3-d convolutions.
         :param batch_size: int: number of samples to take at a time from the dataset
         :param shuffle: bool: if True, randomly select batches
@@ -362,6 +365,7 @@ class SeriesDataGenerator(Sequence):
         assert int(input_time_steps) > 0
         assert int(output_time_steps) > 0
         assert int(batch_size) > 0
+        assert int(interval) > 0
         if sequence is not None:
             assert int(sequence) > 0
         if not(not load):
@@ -382,9 +386,9 @@ class SeriesDataGenerator(Sequence):
         self._indices = []
         self._sequence = sequence
         if self._sequence is not None:
-            self._n_sample = ds.dims['sample'] - input_time_steps - output_time_steps * sequence + 1
+            self._n_sample = ds.dims['sample'] - input_time_steps - output_time_steps * sequence + 2 - interval
         else:
-            self._n_sample = ds.dims['sample'] - input_time_steps - output_time_steps + 1
+            self._n_sample = ds.dims['sample'] - input_time_steps - output_time_steps + 2 - interval
         if 'time_step' in ds.dims:
             # Use -1 index because Preprocessor.data_to_samples (which generates a 'time_step' dim), assigns the
             # datetime 'sample' dim based on the initialization time, time_step=-1
@@ -396,6 +400,7 @@ class SeriesDataGenerator(Sequence):
         self._output_sel = output_sel or {}
         self._input_time_steps = input_time_steps
         self._output_time_steps = output_time_steps
+        self._interval = interval
 
         if load == 'minimal':
             self.da.load()
@@ -549,7 +554,7 @@ class SeriesDataGenerator(Sequence):
         if self._sequence is not None:
             targets = []
             for s in range(self._sequence):
-                t = np.concatenate([self.output_da.values[samples + self._input_time_steps +
+                t = np.concatenate([self.output_da.values[samples + self._input_time_steps + self._interval +
                                                           self._output_time_steps * s + n, np.newaxis]
                                     for n in range(self._output_time_steps)], axis=1)
 
@@ -573,7 +578,7 @@ class SeriesDataGenerator(Sequence):
 
                 targets.append(t)
         else:
-            t = np.concatenate([self.output_da.values[samples + self._input_time_steps + n, np.newaxis]
+            t = np.concatenate([self.output_da.values[samples + self._input_time_steps + n + self._interval, np.newaxis]
                                 for n in range(self._output_time_steps)], axis=1)
 
             t = t.reshape((n_sample, -1))

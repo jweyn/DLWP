@@ -108,6 +108,21 @@ def get_classes(module_name):
     return classes
 
 
+def get_methods(module_name):
+    """
+    From a given module name, return a dictionary {method_name: method_object} of its methods.
+
+    :param module_name: str: name of module to import
+    :return: dict: {method_name: method_object} pairs in the module
+    """
+    module = import_module(module_name)
+    methods = {}
+    for key in dir(module):
+        if callable(getattr(module, key)):
+            methods[key] = get_from_class(module_name, key)
+    return methods
+
+
 def save_model(model, file_name, history=None):
     """
     Saves a class instance with a 'model' attribute to disk. Creates two files: one pickle file containing no model
@@ -155,6 +170,7 @@ def load_model(file_name, history=False, custom_objects=None, gpus=1):
     # Load the saved keras model weights
     custom_objects = custom_objects or {}
     custom_objects.update(get_classes('DLWP.custom'))
+    custom_objects.update(get_methods('DLWP.custom'))
     loaded_model = keras.models.load_model('%s.keras' % file_name, custom_objects=custom_objects, compile=True)
     # If multiple GPUs are requested, copy the model to the GPUs
     if gpus > 1:
