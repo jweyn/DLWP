@@ -953,7 +953,7 @@ class LatitudeWeightedLoss(object):
         return loss
 
 
-def latitude_weighted_loss(loss_function, lats, output_shape, axis=-2, weighting='cosine'):
+def latitude_weighted_loss(loss_function=mean_squared_error, lats=None, output_shape=(), axis=-2, weighting='cosine'):
     """
     Create a loss function that weights inputs by a function of latitude before calculating the loss.
 
@@ -969,28 +969,32 @@ def latitude_weighted_loss(loss_function, lats, output_shape, axis=-2, weighting
     """
     if weighting not in ['cosine', 'midlatitude']:
         raise ValueError("'weighting' must be one of 'cosine' or 'midlatitude'")
-    lat_tensor = K.zeros(lats.shape)
-    lat_tensor.assign(K.cast_to_floatx(lats[:]))
+    if lats is not None:
+        lat_tensor = K.zeros(lats.shape)
+        lat_tensor.assign(K.cast_to_floatx(lats[:]))
 
-    weights = K.cos(lat_tensor * np.pi / 180.)
-    if weighting == 'midlatitude':
-        weights = weights + 0.5 * K.pow(K.sin(lat_tensor * 2 * np.pi / 180.), 2.)
+        weights = K.cos(lat_tensor * np.pi / 180.)
+        if weighting == 'midlatitude':
+            weights = weights + 0.5 * K.pow(K.sin(lat_tensor * 2 * np.pi / 180.), 2.)
 
-    weight_shape = output_shape[axis:]
-    for d in weight_shape[1:]:
-        weights = K.expand_dims(weights, axis=-1)
-        weights = K.repeat_elements(weights, d, axis=-1)
+        weight_shape = output_shape[axis:]
+        for d in weight_shape[1:]:
+            weights = K.expand_dims(weights, axis=-1)
+            weights = K.repeat_elements(weights, d, axis=-1)
 
-    def loss(y_true, y_pred):
+    else:
+        weights = K.ones(output_shape)
+
+    def lat_loss(y_true, y_pred):
         return loss_function(y_true * weights, y_pred * weights)
 
-    return loss
+    return lat_loss
 
 
-def anomaly_correlation_loss(y_true, y_pred, mean=0., regularize_mean='mse', reverse=True):
+def anomaly_correlation(y_true, y_pred, mean=0., regularize_mean='mse', reverse=True):
     """
-    Create a loss function for anomaly correlation. FOR NOW, ASSUMES THAT THE CLIMATOLOGICAL MEAN IS 0, AND THEREFORE
-    REQUIRES DATA SCALED TO REMOVE SPATIALLY-DEPENDENT MEAN.
+    Calculate the anomaly correlation. FOR NOW, ASSUMES THAT THE CLIMATOLOGICAL MEAN IS 0, AND THEREFORE REQUIRES DATA
+    TO BE SCALED TO REMOVE SPATIALLY-DEPENDENT MEAN.
 
     :param y_true: Tensor: target values
     :param y_pred: Tensor: model-predicted values
@@ -1027,6 +1031,66 @@ def anomaly_correlation_loss(y_true, y_pred, mean=0., regularize_mean='mse', rev
             return a - m
         else:
             return a
+
+
+def anomaly_correlation_loss(mean=None, regularize_mean='mse', reverse=True):
+    """
+    Create a Keras loss function for anomaly correlation.
+
+    :param mean: ndarray or None: if not None, must be an array with the same shape as the expected prediction, except
+        that the first (batch) axis should have a dimension of 1.
+    :param regularize_mean: str or None: if not None, also penalizes a form of mean squared error:
+        global: penalize differences in the global mean
+        spatial: penalize differences in spatially-averaged mean (last two dimensions)
+        mse: penalize the mean squared error
+        mae: penalize the mean absolute error
+    :param reverse: bool: if True, inverts the loss so that -1 is the (minimized) target score. Must be True if
+        regularize_mean is not None.
+    :return: method: anomaly correlation loss function
+    """
+    if mean is not None:
+        assert len(mean.shape) > 1
+        assert mean.shape[0] == 1
+        mean_tensor = K.variable(mean, name='anomaly_correlation_mean')
+
+    if regularize_mean is not None:
+        assert regularize_mean in ['global', 'spatial', 'mse', 'mae']
+        reverse = True
+
+    def acc_loss(y_true, y_pred):
+        if mean is not None:
+            a = (K.mean((y_pred - mean_tensor) * (y_true - mean_tensor))
+                 / K.sqrt(K.mean(K.square((y_pred - mean_tensor))) * K.mean(K.square((y_true - mean_tensor)))))
+        else:
+            a = (K.mean(y_pred * y_true)
+                 / K.sqrt(K.mean(K.square(y_pred)) * K.mean(K.square(y_true))))
+        if regularize_mean is not None:
+            if regularize_mean == 'global':
+                m = K.abs((K.mean(y_true) - K.mean(y_pred)) / K.mean(y_true))
+            elif regularize_mean == 'spatial':
+                m = K.mean(K.abs((K.mean(y_true, axis=[-2, -1]) - K.mean(y_pred, axis=[-2, -1]))
+                                 / K.mean(y_true, axis=[-2, -1])))
+            elif regularize_mean == 'mse':
+                m = mean_squared_error(y_true, y_pred)
+            elif regularize_mean == 'mae':
+                m = mean_absolute_error(y_true, y_pred)
+        if reverse:
+            if regularize_mean is not None:
+                return m - a
+            else:
+                return -a
+        else:
+            if regularize_mean:
+                return a - m
+            else:
+                return a
+
+    return acc_loss
+
+
+# Compatibility names
+lat_loss = latitude_weighted_loss()
+acc_loss = anomaly_correlation_loss()
 
 
 # ==================================================================================================================== #

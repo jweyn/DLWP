@@ -8,4 +8,4 @@
 DLWP, or Deep Learning Weather Prediction, is a module for predicting weather using deep learning.
 """
 
-__version__ = '0.6.4'
+__version__ = '0.6.5'

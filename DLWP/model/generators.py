@@ -554,7 +554,7 @@ class SeriesDataGenerator(Sequence):
         if self._sequence is not None:
             targets = []
             for s in range(self._sequence):
-                t = np.concatenate([self.output_da.values[samples + self._input_time_steps + self._interval +
+                t = np.concatenate([self.output_da.values[samples + self._input_time_steps + self._interval - 1 +
                                                           self._output_time_steps * s + n, np.newaxis]
                                     for n in range(self._output_time_steps)], axis=1)
 
@@ -578,7 +578,8 @@ class SeriesDataGenerator(Sequence):
 
                 targets.append(t)
         else:
-            t = np.concatenate([self.output_da.values[samples + self._input_time_steps + n + self._interval, np.newaxis]
+            t = np.concatenate([self.output_da.values[samples + self._input_time_steps + n +
+                                                      self._interval - 1, np.newaxis]
                                 for n in range(self._output_time_steps)], axis=1)
 
             t = t.reshape((n_sample, -1))

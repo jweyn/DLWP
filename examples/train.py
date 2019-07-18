@@ -27,8 +27,8 @@ from keras.callbacks import History, TensorBoard
 # File paths and names
 root_directory = '/home/disk/wave2/jweyn/Data/DLWP'
 predictor_file = os.path.join(root_directory, 'cfs_6h_1979-2010_z500-1000_tau_sfc_NH.nc')
-model_file = os.path.join(root_directory, 'dlwp_6h_tau-lstm_acc')
-log_directory = os.path.join(root_directory, 'logs', 'tau-lstm-acc')
+model_file = os.path.join(root_directory, 'dlwp_6h_tau-lstm_acc-noscale')
+log_directory = os.path.join(root_directory, 'logs', 'tau-lstm-acc-noscale')
 
 # NN parameters. Regularization is applied to LSTM layers by default. weight_loss indicates whether to weight the
 # loss function preferentially in the mid-latitudes.
@@ -41,7 +41,6 @@ batch_size = 64
 lambda_ = 1.e-4
 weight_loss = False
 acc_loss = True
-scale_data_by_mean = True
 shuffle = True
 
 # Data parameters. Specify the input variables/levels, output variables/levels, and time steps in/out. Note that for
@@ -91,7 +90,7 @@ if crop_north_pole:
 #%% Build a model and the data generators
 
 dlwp = DLWPNeuralNet(is_convolutional=model_is_convolutional, is_recurrent=model_is_recurrent, time_dim=time_dim,
-                     scaler_type='StandardScaler' if scale_data_by_mean else None, scale_targets=False)
+                     scaler_type=None, scale_targets=False)
 
 # Find the validation set
 if isinstance(validation_set, int):
@@ -223,7 +222,13 @@ layers = (
 
 # Example custom loss function: pass to loss= in build_model()
 if acc_loss:
-    loss_function = anomaly_correlation_loss
+    # Generate the data to fit the scaler. The generator will by default apply scaling because it is necessary
+    # to automate its use in the Keras fit_generator method, so disable it when dealing with data to fit the scaler
+    print('Finding climatology for ACC loss...')
+    p_fit, t_fit = generator.generate([], scale_and_impute=False)
+    climo = t_fit.mean(axis=0, keepdims=True)
+    p_fit, t_fit = (None, None)
+    loss_function = anomaly_correlation_loss(climo, regularize_mean='mse', reverse=True)
 else:
     loss_function = mean_squared_error
 if weight_loss:
@@ -238,19 +243,6 @@ except ValueError:
         print(layer.name, layer.output_shape)
     raise
 print(dlwp.base_model.summary())
-
-
-#%% Initialize the scaler/imputer if necessary
-
-# Generate the data to fit the scaler and imputer. The generator will by default apply scaling because it is necessary
-# to automate its use in the Keras fit_generator method, so disable it when dealing with data to fit the scaler and
-# imputer. If using pre-scaled data (i.e., dlwp was initialized with scaler_type=None and the Preprocessor data was
-# generated with scale_variables=True), this step should be omitted.
-if scale_data_by_mean:
-    print('Fitting scaler...')
-    p_fit, t_fit = generator.generate([], scale_and_impute=False)
-    dlwp.init_fit(p_fit, t_fit, scaler_kwargs={'with_std': False, 'copy': False})
-    p_fit, t_fit = (None, None)
 
 
 #%% Train, evaluate, and save the model
