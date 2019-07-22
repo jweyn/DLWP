@@ -280,7 +280,7 @@ class TimeSeriesEstimator(object):
             result = xr.DataArray(
                 result,
                 coords=[
-                    np.array([(np.arange(1, es + 1) + (e + 1) * self._interval) * self._dt.values
+                    np.array([(np.arange(0, es) + self._interval + e * (es - 1 + self._interval)) * self._dt.values
                               for e in range(effective_steps)]).flatten(),
                     # np.arange(self._dt.values, (effective_steps * es + 1) * self._dt.values, self._dt.values),
                     sample_coord + (self._input_time_steps - 1) * self._dt,
