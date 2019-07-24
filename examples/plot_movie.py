@@ -11,6 +11,7 @@ Plot a sequence of forecasts from a DLWP model.
 from DLWP.model import SeriesDataGenerator, verify, TimeSeriesEstimator, DLWPFunctional
 from DLWP.util import load_model
 from DLWP.plot.util import blue_red_colormap
+import os
 import numpy as np
 import pandas as pd
 import xarray as xr
