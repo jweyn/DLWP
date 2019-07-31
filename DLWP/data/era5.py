@@ -41,12 +41,7 @@ def _check_exists(file_name, path=False):
 
 # For some reason, multiprocessing.Pool.map is placing arguments passed to the function inside another length-1 tuple.
 # Much clearer programming would have required arguments of obj, m, month, *args here so that the user knows to include
-# the CFS object, month index, month dates, and other arguments correctly.
-def call_process_month(args):
-    obj = args[0]
-    obj._process_month(*args[1:])
-
-
+# the ERA5 object and other arguments correctly.
 def call_fetch(args):
     obj = args[0]
     obj._fetch(*args[1:])
@@ -65,9 +60,23 @@ reforecast_end_date = datetime(2009, 12, 31, 18)
 fill_value = np.array(nc.default_fillvals['f4']).astype(np.float32)
 
 # Dictionary mapping request variables to netCDF variable naming conventions
-var_names = {
+variable_names = {
+    'divergence': 'd',
+    'fraction_of_cloud_cover': 'cc',
     'geopotential': 'z',
-    'temperature': 't'
+    'ozone_mass_mixing_ratio': 'o3',
+    'potential_vorticity': 'pv',
+    'relative_humidity': 'r',
+    'specific_cloud_ice_water_content': 'ciwc',
+    'specific_cloud_liquid_water_content': 'clwc',
+    'specific_humidity': 'q',
+    'specific_rain_water_content': 'crwc',
+    'specific_snow_water_content': 'cswc',
+    'temperature': 't',
+    'u_component_of_wind': 'u',
+    'v_component_of_wind': 'v',
+    'vertical_velocity': 'w',
+    'vorticity': 'vo'
 }
 
 
@@ -92,6 +101,7 @@ class ERA5Reanalysis(object):
         self.raw_files = []
         self.dataset_variables = []
         self.dataset_levels = []
+        self.dataset_dates = None
         if root_directory is None:
             self._root_directory = '%s/.era5' % os.path.expanduser('~')
         else:
@@ -150,12 +160,12 @@ class ERA5Reanalysis(object):
         """
         for v in variables:
             try:
-                assert str(v) in list(var_names.keys())
+                assert str(v) in list(variable_names.keys())
             except TypeError:
                 raise TypeError('variables must be convertible to string types')
             except AssertionError:
                 raise ValueError('variables must be within the available levels for the dataset (%s)' %
-                                 list(var_names.keys()))
+                                 list(variable_names.keys()))
         self.dataset_variables = sorted(list(variables))
 
     def set_levels(self, levels):
@@ -344,6 +354,7 @@ class ERA5Reanalysis(object):
             raise ValueError('set the pressure levels to open with the set_levels() method')
         self._set_file_names()
         self.Dataset = xr.open_mfdataset(self.raw_files, **dataset_kwargs)
+        self.dataset_dates = self.Dataset['time']
 
     def close(self):
         """
@@ -352,6 +363,7 @@ class ERA5Reanalysis(object):
         if self.Dataset is not None:
             self.Dataset.close()
             self.Dataset = None
+            self.dataset_dates = None
             self._lon_array = None
             self._lat_array = None
         else:
