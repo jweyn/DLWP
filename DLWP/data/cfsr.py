@@ -17,7 +17,6 @@ import numpy as np
 import netCDF4 as nc
 import pandas as pd
 import xarray as xr
-from scipy.interpolate import RectBivariateSpline
 from datetime import datetime, timedelta
 try:
     from urllib.request import urlopen
@@ -956,6 +955,9 @@ class CFSReforecast(object):
 
     def _process_month(self, m, month, unique_months, variables, interpolate, write_into_existing, omit_existing,
                        delete_raw_files, verbose):
+        if interpolate is not None:
+            from scipy.interpolate import RectBivariateSpline
+
         def read_grib_lat_lon(file_name):
             exists, exists_file_name = _check_exists(file_name, path=True)
             if not exists:

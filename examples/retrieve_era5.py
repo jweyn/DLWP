@@ -10,8 +10,8 @@ Test retrieval and processing of ERA5Reanalysis data.
 
 from DLWP.data import ERA5Reanalysis
 
-variables = ['geopotential']
-levels = [300, 700]
+variables = ['temperature', 'relative_humidity', 'u_component_of_wind', 'v_component_of_wind']
+levels = [300, 500, 700, 1000]
 
 era = ERA5Reanalysis(root_directory='/home/disk/wave2/jweyn/Data/ERA5', file_id='era5_2deg_3h_')
 era.set_variables(variables)
